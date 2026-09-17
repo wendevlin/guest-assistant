@@ -337,7 +337,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "frontend/get_icons": { fields: ["category", "integration"] },
   "frontend/get_user_data": { fields: ["key"], validate: keyIn(["core", "language", "theme"]) },
   "frontend/subscribe_user_data": { fields: ["key"], subscription: true, validate: keyIn(["core", "language", "theme"]) },
-  "frontend/subscribe_system_data": { fields: ["key"], subscription: true, validate: keyIn(["labs"]) },
+  "frontend/subscribe_system_data": { fields: ["key"], subscription: true, validate: keyIn(["core", "labs"]) },
 
   // Lovelace (read-only)
   "lovelace/info": { fields: ["url_path"], validate: (msg, ctx) => forward({ id: msg.id, type: "lovelace/info", url_path: ctx.dashboard.urlPath }) },

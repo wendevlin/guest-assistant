@@ -8,9 +8,16 @@ const HomeAssistantConfig = z.object({
   long_lived_access_token: z.string().min(1),
 });
 
+/** Same rule as better-auth's username plugin; checked here for a clear error at start-up. */
+export const USERNAME_RE = /^[a-zA-Z0-9_.]+$/;
+
 const UserConfig = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
+  username: z
+    .string()
+    .min(3, "username must be at least 3 characters")
+    .max(30, "username must be at most 30 characters")
+    .regex(USERNAME_RE, "username may only contain letters, digits, '_' and '.'"),
+  password: z.string().min(8, "password must be at least 8 characters"),
 });
 
 const DashboardConfig = z.object({

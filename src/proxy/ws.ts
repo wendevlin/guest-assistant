@@ -80,12 +80,23 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
 
     haWs.addEventListener("message", (event) => {
       if (ws.data.haWs !== haWs) return;
-      let haMsg: Obj;
+      let parsed: unknown;
       try {
-        haMsg = JSON.parse(String(event.data));
+        parsed = JSON.parse(String(event.data));
       } catch {
         return;
       }
+      // With `supported_features: { coalesce_messages: 1 }` HA batches several
+      // messages into one array frame. Every element must pass the filters.
+      const batch = Array.isArray(parsed) ? parsed : [parsed];
+      for (const haMsg of batch) {
+        if (typeof haMsg === "object" && haMsg !== null && !Array.isArray(haMsg)) {
+          handleUpstreamFrame(haMsg as Obj);
+        }
+      }
+    });
+
+    function handleUpstreamFrame(haMsg: Obj): void {
       switch (haMsg.type) {
         case "auth_required":
           haWs.send(JSON.stringify({ type: "auth", access_token: token }));
@@ -102,7 +113,8 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
         default:
           if (ws.data.phase === "active") handleUpstreamMessage(ws, haMsg);
       }
-    });
+    }
+
     haWs.addEventListener("close", () => {
       if (ws.data.haWs === haWs) terminate(ws);
     });
@@ -160,8 +172,8 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
     const id = msg.id;
 
     if (typeof id !== "number") {
-      // Unsolicited messages (e.g. pong) pass through untouched.
-      send(ws, msg);
+      // Every result/event carries the id of a guest command; anything else
+      // is not something a guest asked for.
       return;
     }
 

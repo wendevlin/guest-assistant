@@ -46,6 +46,28 @@ export function createServer({ config, dashboards, auth }: ServerDeps, port: num
 
   const frontendRoot = resolve(config.frontend_development_repo ?? "./public");
 
+  /** Resolves a request path inside the frontend build, or null if outside/missing. */
+  async function frontendFile(pathname: string) {
+    let target: string;
+    try {
+      target = resolve(frontendRoot, `.${decodeURIComponent(pathname)}`);
+    } catch {
+      return null;
+    }
+    if (target !== frontendRoot && !target.startsWith(frontendRoot + sep)) return null;
+    const file = Bun.file(target);
+    return (await file.exists()) ? file : null;
+  }
+
+  // The frontend build ships its own /static (translations, icons, fonts,
+  // locale data, map assets). Serve those first and fall back to HA for
+  // anything else under /static.
+  const haStatic = httpRoutes["/static/*"].GET;
+  const staticHandler = async (req: BunRequest) => {
+    const file = await frontendFile(new URL(req.url).pathname);
+    return file ? new Response(file) : haStatic(req);
+  };
+
   async function serveFrontend(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -55,16 +77,8 @@ export function createServer({ config, dashboards, auth }: ServerDeps, port: num
       return new Response("Not Found", { status: 404 });
     }
 
-    let target: string;
-    try {
-      target = resolve(frontendRoot, `.${decodeURIComponent(url.pathname)}`);
-    } catch {
-      return new Response("Bad Request", { status: 400 });
-    }
-    if (target === frontendRoot || target.startsWith(frontendRoot + sep)) {
-      const file = Bun.file(target);
-      if (await file.exists()) return new Response(file);
-    }
+    const file = await frontendFile(url.pathname);
+    if (file) return new Response(file);
 
     if (request.headers.get("accept")?.includes("text/html")) {
       const index = Bun.file(resolve(frontendRoot, "index.html"));
@@ -82,6 +96,7 @@ export function createServer({ config, dashboards, auth }: ServerDeps, port: num
       "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => auth.handler(withClientIp(req, server)),
       "/api/websocket": (req: BunRequest, server: Server<ConnState>) => wsProxy.upgrade(req, server),
       ...httpRoutes,
+      "/static/*": { GET: staticHandler, HEAD: staticHandler },
       // Everything under /api that is not listed above is denied.
       "/api/*": new Response("Not Found", { status: 404 }),
     },

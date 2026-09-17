@@ -76,6 +76,8 @@ export interface MockHA {
 interface SockData {
   authed: boolean;
   eventSubs: Map<number, string>;
+  /** set by supported_features { coalesce_messages: 1 }: wrap replies in arrays */
+  coalesce: boolean;
 }
 
 export function startMockHA(): MockHA {
@@ -88,6 +90,9 @@ export function startMockHA(): MockHA {
   ]);
   const sockets = new Set<ServerWebSocket<SockData>>();
 
+  // Like HA, batch replies into one array frame once coalescing is on.
+  const deliver = (ws: ServerWebSocket<SockData>, data: string) => ws.send(ws.data.coalesce ? `[${data}]` : data);
+
   const result = (id: unknown, result: unknown) => JSON.stringify({ id, type: "result", success: true, result });
   const error = (id: unknown, code: string) => JSON.stringify({ id, type: "result", success: false, error: { code, message: code } });
   const event = (id: unknown, event: unknown) => JSON.stringify({ id, type: "event", event });
@@ -97,7 +102,7 @@ export function startMockHA(): MockHA {
     fetch(req, server) {
       const url = new URL(req.url);
       if (url.pathname === "/api/websocket") {
-        if (server.upgrade(req, { data: { authed: false, eventSubs: new Map() } })) return undefined;
+        if (server.upgrade(req, { data: { authed: false, eventSubs: new Map(), coalesce: false } })) return undefined;
         return new Response("upgrade failed", { status: 400 });
       }
       if (req.headers.get("authorization") !== `Bearer ${MOCK_TOKEN}`) {
@@ -131,7 +136,7 @@ export function startMockHA(): MockHA {
     websocket: {
       open(ws) {
         sockets.add(ws);
-        ws.send(JSON.stringify({ type: "auth_required", ha_version: "2026.9.0" }));
+        deliver(ws, JSON.stringify({ type: "auth_required", ha_version: "2026.9.0" }));
       },
       close(ws) {
         sockets.delete(ws);
@@ -141,86 +146,90 @@ export function startMockHA(): MockHA {
         if (!ws.data.authed) {
           if (msg.type === "auth" && msg.access_token === MOCK_TOKEN) {
             ws.data.authed = true;
-            ws.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.9.0" }));
+            deliver(ws, JSON.stringify({ type: "auth_ok", ha_version: "2026.9.0" }));
           } else {
-            ws.send(JSON.stringify({ type: "auth_invalid", message: "bad token" }));
+            deliver(ws, JSON.stringify({ type: "auth_invalid", message: "bad token" }));
             ws.close();
           }
           return;
         }
         const id = msg.id;
         switch (msg.type) {
+          case "supported_features":
+            ws.data.coalesce = (msg.features as Obj | undefined)?.coalesce_messages === 1;
+            deliver(ws, result(id, null));
+            return;
           case "ping":
-            ws.send(JSON.stringify({ id, type: "pong" }));
+            deliver(ws, JSON.stringify({ id, type: "pong" }));
             return;
           case "auth/current_user":
-            ws.send(result(id, { id: "proxy", name: "guest-proxy", is_admin: false, is_owner: false }));
+            deliver(ws, result(id, { id: "proxy", name: "guest-proxy", is_admin: false, is_owner: false }));
             return;
           case "lovelace/dashboards/list":
-            ws.send(result(id, [...dashboards.keys()].map((url_path) => ({ id: url_path, url_path, title: url_path, mode: "storage" }))));
+            deliver(ws, result(id, [...dashboards.keys()].map((url_path) => ({ id: url_path, url_path, title: url_path, mode: "storage" }))));
             return;
           case "lovelace/config": {
             const key = (msg.url_path as string | null) ?? "lovelace";
             const cfg = dashboards.get(key);
-            ws.send(cfg ? result(id, cfg) : error(id, "config_not_found"));
+            deliver(ws, cfg ? result(id, cfg) : error(id, "config_not_found"));
             return;
           }
           case "config/entity_registry/list_for_display":
-            ws.send(result(id, { entity_categories: { 0: "config" }, entities: REGISTRY }));
+            deliver(ws, result(id, { entity_categories: { 0: "config" }, entities: REGISTRY }));
             return;
           case "config/device_registry/list":
-            ws.send(result(id, DEVICES));
+            deliver(ws, result(id, DEVICES));
             return;
           case "get_states":
-            ws.send(result(id, STATES));
+            deliver(ws, result(id, STATES));
             return;
           case "get_config":
-            ws.send(result(id, { latitude: 48.2, longitude: 16.3, location_name: "Secret Base", components: ["light", "conversation"], external_url: "https://x" }));
+            deliver(ws, result(id, { latitude: 48.2, longitude: 16.3, location_name: "Secret Base", components: ["light", "conversation"], external_url: "https://x" }));
             return;
           case "get_services":
-            ws.send(result(id, { light: { turn_on: {} }, lock: { unlock: {} }, notify: { send: {} }, homeassistant: { restart: {} } }));
+            deliver(ws, result(id, { light: { turn_on: {} }, lock: { unlock: {} }, notify: { send: {} }, homeassistant: { restart: {} } }));
             return;
           case "get_panels":
-            ws.send(result(id, { lovelace: { url_path: "lovelace" }, "guest-dash": { url_path: "guest-dash" }, "secret-dash": { url_path: "secret-dash" } }));
+            deliver(ws, result(id, { lovelace: { url_path: "lovelace" }, "guest-dash": { url_path: "guest-dash" }, "secret-dash": { url_path: "secret-dash" } }));
             return;
           case "call_service":
             serviceCalls.push(msg);
-            ws.send(result(id, { context: { id: "ctx" } }));
+            deliver(ws, result(id, { context: { id: "ctx" } }));
             return;
           case "subscribe_events":
             ws.data.eventSubs.set(id as number, String(msg.event_type));
-            ws.send(result(id, null));
+            deliver(ws, result(id, null));
             return;
           case "subscribe_entities": {
-            ws.send(result(id, null));
+            deliver(ws, result(id, null));
             const ids = msg.entity_ids as string[] | undefined;
             const a: Obj = {};
             for (const s of STATES) if (!ids || ids.length === 0 || ids.includes(s.entity_id)) a[s.entity_id] = { s: s.state, a: s.attributes };
-            ws.send(event(id, { a }));
+            deliver(ws, event(id, { a }));
             return;
           }
           case "render_template":
-            ws.send(result(id, null));
-            ws.send(event(id, { result: `rendered:${String(msg.template)}:${JSON.stringify(msg.variables)}`, listeners: {} }));
+            deliver(ws, result(id, null));
+            deliver(ws, event(id, { result: `rendered:${String(msg.template)}:${JSON.stringify(msg.variables)}`, listeners: {} }));
             return;
           case "history/history_during_period": {
             const out: Obj = {};
             for (const s of STATES) out[s.entity_id] = [{ s: s.state }];
-            ws.send(result(id, out));
+            deliver(ws, result(id, out));
             return;
           }
           case "auth/sign_path":
-            ws.send(result(id, { path: `${String(msg.path)}?authSig=signed` }));
+            deliver(ws, result(id, { path: `${String(msg.path)}?authSig=signed` }));
             return;
           case "camera/stream":
-            ws.send(result(id, { url: `/api/hls/token-${String(msg.entity_id)}/master_playlist.m3u8` }));
+            deliver(ws, result(id, { url: `/api/hls/token-${String(msg.entity_id)}/master_playlist.m3u8` }));
             return;
           case "unsubscribe_events":
             ws.data.eventSubs.delete(msg.subscription as number);
-            ws.send(result(id, null));
+            deliver(ws, result(id, null));
             return;
           default:
-            ws.send(error(id, "unknown_command"));
+            deliver(ws, error(id, "unknown_command"));
         }
       },
     },
@@ -235,7 +244,7 @@ export function startMockHA(): MockHA {
     emitEvent(eventType, data) {
       for (const ws of sockets) {
         for (const [id, type] of ws.data.eventSubs) {
-          if (type === eventType) ws.send(event(id, { event_type: eventType, data, origin: "LOCAL", time_fired: "", context: {} }));
+          if (type === eventType) deliver(ws, event(id, { event_type: eventType, data, origin: "LOCAL", time_fired: "", context: {} }));
         }
       }
     },

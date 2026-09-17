@@ -104,7 +104,11 @@ bun test
 ```
 
 The guest frontend is served from `./public` or from
-`frontend_development_repo` (a build of the HA guest frontend).
+`frontend_development_repo`. Its source lives in the sibling repository
+`guest-assistant-frontend` (a fork of the Home Assistant frontend) under
+`guest-assistant/`; `guest-assistant/script/develop` there builds into
+`guest-assistant/dist`, which is the directory to point
+`frontend_development_repo` at.
 
 ## Endpoints the frontend uses
 

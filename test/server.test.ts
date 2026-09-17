@@ -218,6 +218,22 @@ describe("WebSocket proxy", () => {
     ws.close();
   });
 
+  test("coalesced (array) frames from HA are filtered element by element", async () => {
+    const ws = await connect();
+    const sf = await ws.send({ type: "supported_features", features: { coalesce_messages: 1 } });
+    expect(sf.success).toBe(true);
+    const [states, config, panels] = await Promise.all([
+      ws.send({ type: "get_states" }),
+      ws.send({ type: "get_config" }),
+      ws.send({ type: "get_panels" }),
+    ]);
+    expect((states.result as Array<{ entity_id: string }>).map((s) => s.entity_id).sort()).toEqual(["camera.garden", "light.kitchen", "lock.front"]);
+    expect((config.result as { latitude: number; components: string[] }).latitude).toBe(0);
+    expect((config.result as { components: string[] }).components).toEqual(["light"]);
+    expect(Object.keys(panels.result as object)).toEqual(["guest-dash"]);
+    ws.close();
+  });
+
   test("render_template runs dashboard templates with fixed variables", async () => {
     const ws = await connect();
     const res = await ws.send({
