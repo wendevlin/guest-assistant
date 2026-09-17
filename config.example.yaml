@@ -1,0 +1,40 @@
+# Guest Assistant Configuration
+#
+# This proxy sits between guests (tablets, visitors) and Home Assistant.
+# Guests get their own login and are restricted to exactly the entities on
+# their assigned dashboard. See README.md for the security model.
+
+home-assistant:
+  # Hostname or IP of your Home Assistant instance (default: localhost)
+  host: "homeassistant.local"
+  # Port of your Home Assistant instance (default: 8123)
+  port: 8123
+  # Use https/wss to reach Home Assistant (default: false)
+  tls: false
+  # Long-lived access token of a dedicated NON-ADMIN Home Assistant user.
+  # Create the user under Settings → People (untick "Administrator"), log in
+  # as that user once and create the token under Profile → Security.
+  # The proxy refuses to start with an admin token.
+  long_lived_access_token: "your-long-lived-access-token-here"
+
+# Public URL under which guests reach this proxy. Used for cookies and CSRF
+# protection, so it must match what the browser sees.
+base_url: "http://localhost:3001"
+port: 3001
+
+# Optional: serve the guest frontend from a build directory instead of ./public
+# frontend_development_repo: "/path/to/frontend/guest/dist"
+
+dashboards:
+  # `id` is the url_path of the dashboard in Home Assistant.
+  # "lovelace" is the default dashboard. Dashboards must have a saved config
+  # (take control of auto-generated dashboards first) and must not contain
+  # custom cards, strategies, area/energy/iframe cards or navigation actions.
+  - id: "guest-dashboard"
+    users:
+      - username: "guest"
+        password: "change-me"
+  - id: "kitchen-tablet"
+    users:
+      - username: "kitchen"
+        password: "change-me-too"
