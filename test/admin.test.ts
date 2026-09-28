@@ -139,7 +139,7 @@ describe("fresh installation (standalone)", () => {
     // Dashboards and guests are managed through the API.
     const available = await a.call("GET", "dashboards");
     expect(available.body.available.map((d: Json) => d.id)).toContain("guest-dash");
-    const added = await a.call("POST", "dashboards", { id: "guest-dash", theme: { mode: "light" } });
+    const added = await a.call("POST", "dashboards", { id: "guest-dash" });
     expect(added.status).toBe(200);
     expect(added.body.configured).toMatchObject([{ id: "guest-dash", status: "ok", entities: 3, title: "Title guest-dash" }]);
     expect((await a.call("POST", "dashboards", { id: "nope" })).status).toBe(400);
@@ -351,7 +351,7 @@ describe("admin decisions on a dashboard", () => {
     const moved = await a.call("PATCH", `guests/${links.id}`, { dashboard: "guest-dash" });
     expect(moved.status).toBe(200);
     expect(moved.body).toEqual({ id: links.id, username: "links", dashboard: "guest-dash" });
-    // the look is set per dashboard only
+    // there are no look settings
     expect((await a.call("PATCH", `guests/${links.id}`, { theme: { mode: "dark" } })).status).toBe(400);
     await ws.closed;
     expect((await env.hassToken(cookie)).status).toBe(401);
@@ -364,22 +364,17 @@ describe("admin decisions on a dashboard", () => {
   });
 
   let guestCookie = "";
-  test("theme changes reach guests with their next token", async () => {
+  test("there are no look settings for dashboards", async () => {
     const { ws, cookie } = await connectGuest("guest", "guest-pass-123");
     guestCookie = cookie;
-    expect((await a.call("PATCH", "dashboards/guest-dash", { theme: { name: "midnight", mode: "light" } })).status).toBe(200);
-    await ws.closed;
-    const token = await env.hassToken(cookie);
-    expect(token.body.theme_mode_selectable).toBe(false);
-    const again = new GuestWs(env.wsUrl);
-    await again.auth(token.body.access_token as string);
-    const theme = await again.send({ type: "frontend/get_user_data", key: "theme" });
-    expect(theme.result).toEqual({ value: { theme: "midnight", dark: false } });
-    again.close();
+    expect((await a.call("PATCH", "dashboards/guest-dash", { theme: { mode: "light" } })).status).toBe(400);
+    expect((await a.call("GET", "themes")).status).toBe(404);
+    const theme = await ws.send({ type: "frontend/get_user_data", key: "theme" });
+    expect(theme.result).toEqual({ value: null });
+    ws.close();
   });
 
-  test("themes and settings", async () => {
-    expect((await a.call("GET", "themes")).body).toEqual(["midnight", "nord"]);
+  test("settings", async () => {
     const saved = await a.call("PUT", "settings", { public_url: "https://guests.example.com/ignored-path" });
     expect(saved.body.public_url).toBe("https://guests.example.com");
     expect((await a.call("PUT", "settings", { public_url: "javascript:alert(1)" })).status).toBe(400);
@@ -458,13 +453,11 @@ describe("config.yaml import", () => {
     expect(await importLegacyConfig(runtime, path)).toBe(false);
     expect(runtime.haSettings).toMatchObject({ url: `http://localhost:${ha.port}`, token: MOCK_TOKEN, configured_by: "config.yaml" });
     expect(runtime.publicUrl).toBe("https://guests.example.com");
-    expect(runtime.store.listDashboards()).toEqual([{ id: "guest-dash", theme: { mode: "dark" }, answers: {} }]);
+    expect(runtime.store.listDashboards()).toEqual([{ id: "guest-dash", answers: {} }]);
     const guests = await runtime.guests.list();
     expect(guests).toMatchObject([{ username: "Visitor", dashboard: "guest-dash" }]);
     await runtime.connect();
     expect(runtime.state).toBe("connected");
-    // old per-user overrides are ignored
-    expect(runtime.themeFor("guest-dash")).toEqual({ mode: "dark", guest_can_change_mode: false });
     runtime.close();
     ha.stop();
   });

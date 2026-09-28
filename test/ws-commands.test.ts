@@ -178,9 +178,6 @@ describe("lovelace", () => {
 });
 
 describe("frontend user data", () => {
-  const withTheme = (theme: CommandContext["theme"], msg: Record<string, unknown>) =>
-    evaluate({ id: 1, ...msg }, { dashboard, theme, subscriptions: new Map() });
-
   test("the proxy user's preferences are never read from HA", () => {
     expect(run({ type: "frontend/subscribe_user_data", key: "language" })).toEqual({ kind: "reply", result: null, events: [{ value: null }] });
     expect(run({ type: "frontend/get_user_data", key: "language" })).toEqual({ kind: "reply", result: { value: null } });
@@ -188,20 +185,9 @@ describe("frontend user data", () => {
     expectReject({ type: "frontend/subscribe_user_data", key: "dashboards" });
   });
 
-  test("theme comes from config.yaml", () => {
-    expect(withTheme({ mode: "auto", guest_can_change_mode: false }, { type: "frontend/subscribe_user_data", key: "theme" })).toEqual({
-      kind: "reply",
-      result: null,
-      events: [{ value: { theme: "" } }],
-    });
-    expect(withTheme({ name: "nord", mode: "dark", guest_can_change_mode: true }, { type: "frontend/get_user_data", key: "theme" })).toEqual({
-      kind: "reply",
-      result: { value: { theme: "nord", dark: true } },
-    });
-    expect(withTheme({ mode: "light", guest_can_change_mode: false }, { type: "frontend/get_user_data", key: "theme" })).toEqual({
-      kind: "reply",
-      result: { value: { theme: "", dark: false } },
-    });
+  test("theme is unset, so the frontend follows HA's default and the dashboard/view themes", () => {
+    expect(run({ type: "frontend/subscribe_user_data", key: "theme" })).toEqual({ kind: "reply", result: null, events: [{ value: null }] });
+    expect(run({ type: "frontend/get_user_data", key: "theme" })).toEqual({ kind: "reply", result: { value: null } });
   });
 
   test("saving language/theme is acknowledged locally, other keys are rejected", () => {

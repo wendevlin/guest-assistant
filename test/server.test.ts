@@ -25,7 +25,7 @@ describe("auth surface", () => {
     const t = await env.hassToken(cookie);
     expect(t.status).toBe(200);
     expect(t.body.dashboard_url_path).toBe("guest-dash");
-    expect(t.body.theme_mode_selectable).toBe(true);
+    expect(t.body).not.toHaveProperty("theme_mode_selectable");
     expect(typeof t.body.access_token).toBe("string");
   });
 
@@ -158,12 +158,12 @@ describe("WebSocket proxy", () => {
     await ws.closed;
   });
 
-  test("theme settings from the admin reach the frontend, HA's own are never read", async () => {
+  test("the theme is unset for guests, the proxy user's own is never read", async () => {
     const ws = await connect();
     const res = await ws.send({ type: "frontend/subscribe_user_data", key: "theme" });
     expect(res.success).toBe(true);
     const [event] = await ws.events(res.id as number);
-    expect(event!.event).toEqual({ value: { theme: "nord", dark: true } });
+    expect(event!.event).toEqual({ value: null });
   });
 
   test("get_states, registries, config and panels are filtered", async () => {

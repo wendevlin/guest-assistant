@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseTheme, type ThemeSettings } from "./theme";
 
 /** Answers of the admin to the questions a dashboard analysis raised (question key → option). */
 export type Answers = Record<string, string>;
@@ -9,7 +8,6 @@ export type Answers = Record<string, string>;
 export interface DashboardRecord {
   /** url_path of the HA dashboard; "lovelace" is the default dashboard. */
   id: string;
-  theme: ThemeSettings;
   answers: Answers;
 }
 
@@ -44,7 +42,8 @@ export class Store {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("CREATE TABLE IF NOT EXISTS ga_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     this.db.exec(
-      "CREATE TABLE IF NOT EXISTS ga_dashboards (id TEXT PRIMARY KEY, theme TEXT NOT NULL DEFAULT '{}', answers TEXT NOT NULL DEFAULT '{}', added_at TEXT NOT NULL)",
+      // (older databases also have a now unused `theme` column)
+      "CREATE TABLE IF NOT EXISTS ga_dashboards (id TEXT PRIMARY KEY, answers TEXT NOT NULL DEFAULT '{}', added_at TEXT NOT NULL)",
     );
   }
 
@@ -74,22 +73,22 @@ export class Store {
 
   listDashboards(): DashboardRecord[] {
     return this.db
-      .query<{ id: string; theme: string; answers: string }, []>("SELECT id, theme, answers FROM ga_dashboards ORDER BY added_at, id")
+      .query<{ id: string; answers: string }, []>("SELECT id, answers FROM ga_dashboards ORDER BY added_at, id")
       .all()
       .map(toRecord);
   }
 
   getDashboard(id: string): DashboardRecord | undefined {
-    const row = this.db.query<{ id: string; theme: string; answers: string }, [string]>("SELECT id, theme, answers FROM ga_dashboards WHERE id = ?").get(id);
+    const row = this.db.query<{ id: string; answers: string }, [string]>("SELECT id, answers FROM ga_dashboards WHERE id = ?").get(id);
     return row ? toRecord(row) : undefined;
   }
 
   saveDashboard(record: DashboardRecord): void {
     this.db
       .query(
-        "INSERT INTO ga_dashboards (id, theme, answers, added_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET theme = excluded.theme, answers = excluded.answers",
+        "INSERT INTO ga_dashboards (id, answers, added_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET answers = excluded.answers",
       )
-      .run(record.id, JSON.stringify(record.theme), JSON.stringify(record.answers), new Date().toISOString());
+      .run(record.id, JSON.stringify(record.answers), new Date().toISOString());
   }
 
   deleteDashboard(id: string): void {
@@ -97,7 +96,7 @@ export class Store {
   }
 }
 
-function toRecord(row: { id: string; theme: string; answers: string }): DashboardRecord {
+function toRecord(row: { id: string; answers: string }): DashboardRecord {
   let answers: Answers = {};
   try {
     const parsed = JSON.parse(row.answers);
@@ -107,5 +106,5 @@ function toRecord(row: { id: string; theme: string; answers: string }): Dashboar
   } catch {
     // corrupt answers count as unanswered, which is the restrictive choice
   }
-  return { id: row.id, theme: parseTheme(row.theme), answers };
+  return { id: row.id, answers };
 }

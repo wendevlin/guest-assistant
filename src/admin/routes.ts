@@ -10,7 +10,6 @@ import { authorizeUrl, exchangeCode, HaAuthError, probeHa, revokeRefreshToken } 
 import { lookupIngressUser, SUPERVISOR_IP } from "../ha/supervisor";
 import { RuntimeError, type Runtime } from "../runtime";
 import { connectAsApp, connectWithAdmin } from "../setup/connect";
-import { ThemeSettings } from "../theme";
 import { ADMIN_COOKIE, AdminSessions, cookie, OAUTH_COOKIE, readCookie, type AdminSession } from "./sessions";
 import { createAssetHandler } from "./assets";
 
@@ -41,8 +40,8 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
   Response.json(data, { status, headers: { "cache-control": "no-store", ...headers } });
 
 const Answers = z.record(z.string().max(2000), z.string().max(50));
-const DashboardInput = z.strictObject({ id: z.string().min(1).max(200), theme: ThemeSettings.optional(), answers: Answers.optional() });
-const DashboardPatch = z.strictObject({ theme: ThemeSettings.optional(), answers: Answers.optional() });
+const DashboardInput = z.strictObject({ id: z.string().min(1).max(200), answers: Answers.optional() });
+const DashboardPatch = z.strictObject({ answers: Answers });
 const GuestInput = z.strictObject({ username: Username, password: Password, dashboard: z.string().min(1) });
 const GuestPatch = z.strictObject({ password: Password.optional(), dashboard: z.string().min(1).optional() });
 const SettingsInput = z.strictObject({ public_url: z.union([z.url({ protocol: /^https?$/ }), z.literal("")]) });
@@ -134,7 +133,6 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       violations: d.violations,
       entities: d.entities.size,
       guests,
-      theme: runtime.dashboardTheme(d.id),
       pending: d.pending.length,
       questions: d.questions.map((q) => ({
         key: q.key,
@@ -288,7 +286,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         return json(await dashboardsView());
       case "POST dashboards": {
         const input = await body(req, DashboardInput);
-        await runtime.addDashboard(input.id, input.theme, input.answers);
+        await runtime.addDashboard(input.id, input.answers);
         return json(await dashboardsView());
       }
       case "GET guests":
@@ -297,8 +295,6 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         const input = await body(req, GuestInput);
         return json(await runtime.createGuest(input), 201);
       }
-      case "GET themes":
-        return json(await runtime.listThemes());
       case "PUT settings": {
         const { public_url } = await body(req, SettingsInput);
         await runtime.setPublicUrl(public_url || undefined);

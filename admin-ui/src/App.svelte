@@ -22,7 +22,6 @@
   const TABS: Tab[] = ["dashboards", "guests", "settings"];
 
   let info = $state<StateView | null>(null);
-  let themes = $state<string[]>([]);
   let tab = $state<Tab>(TABS.includes(location.hash.slice(1) as Tab) ? (location.hash.slice(1) as Tab) : "dashboards");
 
   // Errors from the sign-in round trip arrive as ?error=…
@@ -35,7 +34,6 @@
   async function refresh() {
     try {
       info = await api.state();
-      if (info.signed_in === "admin" && info.ha?.state === "connected") themes = await api.themes().catch(() => []);
       // Set-up as an app runs in the background: poll until it is done.
       if (info.mode === "app" && (!info.configured || info.ha?.state === "connecting")) setTimeout(refresh, 2000);
     } catch (err) {
@@ -139,7 +137,7 @@
         </Tabs.List>
         <!-- Each view is created when its tab opens, so it loads current data
              (e.g. a dashboard added a moment ago shows up for new guests). -->
-        <Tabs.Content value="dashboards">{#if tab === "dashboards"}<Dashboards {themes} />{/if}</Tabs.Content>
+        <Tabs.Content value="dashboards">{#if tab === "dashboards"}<Dashboards />{/if}</Tabs.Content>
         <Tabs.Content value="guests">{#if tab === "guests"}<Guests />{/if}</Tabs.Content>
         <Tabs.Content value="settings">{#if tab === "settings"}<Settings {info} onstate={(s) => (info = s)} />{/if}</Tabs.Content>
       </Tabs.Root>

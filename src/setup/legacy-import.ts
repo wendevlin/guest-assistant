@@ -3,7 +3,6 @@ import z from "zod";
 import { Password, Username } from "../guests";
 import { normalizeHaUrl } from "../ha/endpoint";
 import type { Runtime } from "../runtime";
-import { ThemeSettings } from "../theme";
 
 /**
  * Earlier versions were configured with a config.yaml. On the first start
@@ -22,8 +21,7 @@ const LegacyConfig = z.object({
     .array(
       z.object({
         id: z.string().min(1),
-        theme: ThemeSettings.optional(),
-        // per-user theme overrides of old configs are ignored; the look is set per dashboard
+        // theme settings of old configs are ignored: guests follow HA's themes
         users: z.array(z.object({ username: Username, password: Password })).default([]),
       }),
     )
@@ -47,7 +45,7 @@ export async function importLegacyConfig(runtime: Runtime, path: string): Promis
   console.log(`Importing ${path}. From now on, settings are managed in the admin UI and the file is ignored.`);
 
   if (config.base_url && !config.base_url.startsWith("http://localhost")) await runtime.setPublicUrl(config.base_url);
-  for (const d of config.dashboards) runtime.store.saveDashboard({ id: d.id, theme: d.theme ?? {}, answers: {} });
+  for (const d of config.dashboards) runtime.store.saveDashboard({ id: d.id, answers: {} });
 
   // Accounts synced from the file by the old version are already in the
   // database; they are updated to the file's state instead of duplicated.

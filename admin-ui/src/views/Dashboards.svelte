@@ -6,17 +6,14 @@
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
   import { Separator } from "$lib/components/ui/separator";
-  import { api, type DashboardsView, type DashboardView, type QuestionView, type ThemeSettings } from "$lib/api";
+  import { api, type DashboardsView, type DashboardView, type QuestionView } from "$lib/api";
   import { message } from "$lib/errors";
   import { t } from "$lib/i18n";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
-  import ThemeEditor from "$lib/widgets/ThemeEditor.svelte";
   import AddDashboard from "./AddDashboard.svelte";
   import Analysis from "./Analysis.svelte";
   import StatusBadges from "./StatusBadges.svelte";
-
-  let { themes }: { themes: string[] } = $props();
 
   let data = $state<DashboardsView | null>(null);
   let error = $state<string | null>(null);
@@ -49,7 +46,7 @@
   }
 
   /** Changes take effect immediately; a short "Saved" confirms it. */
-  async function save(id: string, changes: { theme?: ThemeSettings; answers?: Record<string, string> }) {
+  async function save(id: string, changes: { answers: Record<string, string> }) {
     if (!(await run(() => api.updateDashboard(id, changes)))) return;
     saved = id;
     clearTimeout(savedTimer);
@@ -91,7 +88,6 @@
     {#if adding}
       <AddDashboard
         available={data.available}
-        {themes}
         onadded={(result, id) => {
           data = result;
           adding = false;
@@ -129,11 +125,6 @@
           <Separator />
           <div class="grid gap-6 px-5 py-5">
             <Analysis dashboard={d} onanswer={(q, value) => answer(d, q, value)} />
-            <Separator />
-            <section class="grid gap-3">
-              <h3 class="font-medium">{t("dash.theme")}</h3>
-              <ThemeEditor value={d.theme} {themes} onchange={(theme) => save(d.id, { theme })} />
-            </section>
             <Separator />
             <div>
               <Button variant="ghost" class="text-destructive hover:text-destructive" onclick={() => ((removing = d), (confirmOpen = true))}>{t("dash.remove")}</Button>

@@ -44,7 +44,7 @@ Browser ──► guest-assistant (Bun) ──► Home Assistant
 | Templates | only markdown templates that appear verbatim in the dashboard; `variables` are fixed by the proxy |
 | Registries | entity/device registries reduced to allowed entities and their devices |
 | Config | location, URLs and Assist are hidden |
-| User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` comes from the dashboard settings on the admin page |
+| User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` is unset, so guests get HA's default theme and the themes set on the dashboard and its views, with dark mode following the device |
 
 Everything else (`execute_script`, `search/related`, `tag/list`, media
 browsing, energy, arbitrary REST paths, better-auth account management, …) is
@@ -102,8 +102,8 @@ set-up needs no input. The admin page is only reachable through ingress. See
 `addon/README.md`; the packaging there is not tested on a real Supervisor yet.
 
 **Upgrading from config.yaml:** on the first start with an empty database an
-existing `config.yaml` is imported once (connection, dashboards, themes,
-guests). After that the file is ignored and can be deleted.
+existing `config.yaml` is imported once (connection, dashboards and
+guests; theme settings are ignored). After that the file is ignored and can be deleted.
 
 ### Questions for the admin
 
@@ -136,8 +136,8 @@ A few settings are environment variables (Bun also reads a `.env` file, see
 | `INGRESS_PORT` | `8099` | admin page as an app |
 | `ADMIN_UI_DIR` | `admin-ui/dist` | built admin page |
 
-Guests change their language (and, if allowed, light/dark mode) in the
-settings dialog; the choice is stored on their device only.
+Guests change their language in the settings dialog; the choice is stored
+on their device only.
 
 ## Running
 

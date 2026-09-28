@@ -10,7 +10,6 @@
  * and the respective component websocket_api modules.
  */
 
-import type { GuestTheme } from "../theme";
 import type { Dashboard } from "../dashboard";
 import { entityDomain, isEntityId } from "../dashboard";
 import * as F from "./ws-filters";
@@ -24,8 +23,6 @@ export interface TrackedCommand {
 
 export interface CommandContext {
   dashboard: Dashboard;
-  /** theme settings of the guest (set by the admin) */
-  theme?: GuestTheme;
   /** subscriptions established on this connection (id → command) */
   subscriptions: ReadonlyMap<number, TrackedCommand>;
 }
@@ -350,14 +347,10 @@ function localUserData(key: unknown, ctx: CommandContext): unknown {
   switch (key) {
     case "language":
       return null;
-    case "theme": {
-      const theme = ctx.theme;
-      if (!theme) return null;
-      // Same shape as HA's ThemeSettings; `dark` unset means "follow the device".
-      const value: Obj = { theme: theme.name ?? "" };
-      if (theme.mode !== "auto") value.dark = theme.mode === "dark";
-      return value;
-    }
+    case "theme":
+      // Unset: the frontend follows HA's default theme and the themes set on
+      // the dashboard and its views; dark mode follows the device.
+      return null;
     case "core":
       return null;
     default:
@@ -417,7 +410,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "frontend/get_icons": { fields: ["category", "integration"] },
   // User data belongs to the HA user behind the proxy token, so it is never
   // read from or written to HA. "language" is answered as unset (guests pick
-  // it on their device), "theme" comes from the admin settings, and saving either is
+  // it on their device), "theme" is unset (HA's default theme applies), and saving either is
   // acknowledged without effect: the frontend keeps the choice locally.
   "frontend/get_user_data": {
     fields: ["key"],

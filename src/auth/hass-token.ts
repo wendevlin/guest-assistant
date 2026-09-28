@@ -7,7 +7,7 @@ import type { Runtime } from "../runtime";
  * Exchanges a valid better-auth session for a short-lived JWT the guest
  * frontend presents in the HA-compatible WebSocket auth handshake.
  */
-export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboards" | "themeFor">) {
+export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboards">) {
   return async (request: Request): Promise<Response> => {
     const session = await runtime.auth.api.getSession({ headers: request.headers });
     if (!session) {
@@ -29,12 +29,10 @@ export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboar
       );
     }
 
-    const theme = runtime.themeFor(dashboard.id);
     const token = signJWT({
       sub: session.user.id,
       sid: session.session.id,
       dashboard: dashboard.id,
-      theme,
       exp: Math.floor(Date.now() / 1000) + JWT_TTL_SECONDS,
     });
 
@@ -43,7 +41,6 @@ export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboar
       refresh_token: "session",
       expires_in: JWT_TTL_SECONDS,
       dashboard_url_path: dashboard.urlPath,
-      theme_mode_selectable: theme.guest_can_change_mode,
     });
   };
 }

@@ -1,7 +1,6 @@
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import type { Dashboard } from "../dashboard";
 import { haWsUrl, type HaEndpoint } from "../ha/endpoint";
-import type { GuestTheme } from "../theme";
 import { verifyJWT } from "../jwt";
 import { COMMANDS, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand } from "./ws-commands";
 
@@ -11,7 +10,6 @@ export interface ConnState {
   phase: Phase;
   userId: string | null;
   dashboard: Dashboard | null;
-  theme: GuestTheme | null;
   haWs: WebSocket | null;
   /** commands sent upstream that await their result */
   pending: Map<number, TrackedCommand>;
@@ -78,7 +76,6 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
     ws.data.userId = payload.sub;
     ws.data.dashboard = dashboard;
-    ws.data.theme = payload.theme;
     ws.data.phase = "connecting_ha";
     register(ws);
 
@@ -147,7 +144,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       return;
     }
 
-    const ctx: CommandContext = { dashboard, theme: ws.data.theme ?? undefined, subscriptions: ws.data.subscriptions };
+    const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
     const verdict = evaluate(msg, ctx);
 
     switch (verdict.kind) {
@@ -175,7 +172,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
   function handleUpstreamMessage(ws: GuestSocket, msg: Obj): void {
     const dashboard = ws.data.dashboard!;
-    const ctx: CommandContext = { dashboard, theme: ws.data.theme ?? undefined, subscriptions: ws.data.subscriptions };
+    const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
     const id = msg.id;
 
     if (typeof id !== "number") {
@@ -259,7 +256,6 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       phase: "awaiting_auth",
       userId: null,
       dashboard: null,
-      theme: null,
       haWs: null,
       pending: new Map(),
       subscriptions: new Map(),

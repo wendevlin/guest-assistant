@@ -6,7 +6,6 @@ import { Guests } from "./guests";
 import { HaClient, HaCommandError } from "./ha/client";
 import type { HaEndpoint } from "./ha/endpoint";
 import type { HaSettings, Store } from "./store";
-import { resolveTheme, type GuestTheme, type ThemeSettings } from "./theme";
 
 export type ConnectionState = "unconfigured" | "connecting" | "connected" | "error";
 export type Mode = "standalone" | "app";
@@ -252,27 +251,22 @@ export class Runtime {
     return dashboard;
   }
 
-  async addDashboard(id: string, theme: ThemeSettings = {}, answers: Record<string, string> = {}): Promise<Dashboard> {
+  async addDashboard(id: string, answers: Record<string, string> = {}): Promise<Dashboard> {
     const available = await this.listHaDashboards();
     if (!available.some((d) => d.id === id)) throw new RuntimeError(`Dashboard "${id}" does not exist in Home Assistant`);
     if (this.dashboards.has(id)) throw new RuntimeError(`Dashboard "${id}" is already a guest dashboard`);
-    this.store.saveDashboard({ id, theme, answers });
+    this.store.saveDashboard({ id, answers });
     const dashboard = this.track(new Dashboard(id, answers));
     await this.loadDashboard(dashboard);
     return dashboard;
   }
 
-  async updateDashboard(id: string, changes: { theme?: ThemeSettings; answers?: Record<string, string> }): Promise<void> {
+  async updateDashboard(id: string, changes: { answers: Record<string, string> }): Promise<void> {
     const record = this.store.getDashboard(id);
     const dashboard = this.dashboards.get(id);
     if (!record || !dashboard) throw new RuntimeError(`Dashboard "${id}" is not a guest dashboard`);
-    const updated = { ...record, ...changes };
-    this.store.saveDashboard(updated);
-    if (changes.theme) {
-      // Theme settings travel in the guests' tokens: make them reconnect.
-      this.emit("dashboardRemoved", id);
-    }
-    if (changes.answers) dashboard.setAnswers(updated.answers);
+    this.store.saveDashboard({ ...record, answers: changes.answers });
+    dashboard.setAnswers(changes.answers);
   }
 
   /** Removes a guest dashboard together with its guests. */
@@ -284,20 +278,6 @@ export class Runtime {
     this.dashboards.delete(id);
     this.emit("dashboardRemoved", id);
     void this.dismissNotification(id);
-  }
-
-  dashboardTheme(id: string): ThemeSettings {
-    return this.store.getDashboard(id)?.theme ?? {};
-  }
-
-  /** The look guests of a dashboard get; set per dashboard only. */
-  themeFor(dashboardId: string): GuestTheme {
-    return resolveTheme(this.dashboardTheme(dashboardId));
-  }
-
-  async listThemes(): Promise<string[]> {
-    const result = (await this.requireClient().sendCommand({ type: "frontend/get_themes" })) as { themes?: Record<string, unknown> };
-    return Object.keys(result.themes ?? {}).sort();
   }
 
   // ── guests ──────────────────────────────────────────────────────────────

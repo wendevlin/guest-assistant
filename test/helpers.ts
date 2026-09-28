@@ -55,9 +55,9 @@ export async function startTestEnv({ configured = true, mode = "standalone" as M
 
   if (configured) {
     store.set("ha", { url: ha.url, token: ha.endpoint.token });
-    store.saveDashboard({ id: "guest-dash", theme: { name: "nord", mode: "dark", guest_can_change_mode: true }, answers: {} });
-    store.saveDashboard({ id: "bad-dash", theme: {}, answers: {} });
-    store.saveDashboard({ id: "strategy-dash", theme: {}, answers: {} });
+    store.saveDashboard({ id: "guest-dash", answers: {} });
+    store.saveDashboard({ id: "bad-dash", answers: {} });
+    store.saveDashboard({ id: "strategy-dash", answers: {} });
     for (const u of USERS) await runtime.guests.create(u);
     await runtime.connect();
   }

@@ -10,12 +10,6 @@ export interface StateView {
   public_url: string | null;
 }
 
-export interface ThemeSettings {
-  name?: string;
-  mode?: "auto" | "light" | "dark";
-  guest_can_change_mode?: boolean;
-}
-
 export interface QuestionView {
   key: string;
   kind: "navigate_view" | "navigate_outside" | "url" | "media_group";
@@ -34,7 +28,6 @@ export interface DashboardView {
   violations: Array<{ rule: string; path: string; message: string }>;
   entities: number;
   guests: number;
-  theme: ThemeSettings;
   pending: number;
   questions: QuestionView[];
 }
@@ -95,9 +88,8 @@ export const api = {
   logout: () => request<{ ok: true }>("POST", "logout", {}),
   dashboards: () => request<DashboardsView>("GET", "dashboards"),
   preview: (id: string) => request<DashboardView>("GET", `dashboards/preview/${enc(id)}`),
-  addDashboard: (id: string, theme: ThemeSettings, answers: Record<string, string>) =>
-    request<DashboardsView>("POST", "dashboards", { id, theme, answers }),
-  updateDashboard: (id: string, changes: { theme?: ThemeSettings; answers?: Record<string, string> }) =>
+  addDashboard: (id: string, answers: Record<string, string>) => request<DashboardsView>("POST", "dashboards", { id, answers }),
+  updateDashboard: (id: string, changes: { answers: Record<string, string> }) =>
     request<DashboardsView>("PATCH", `dashboards/${enc(id)}`, changes),
   removeDashboard: (id: string) => request<DashboardsView>("DELETE", `dashboards/${enc(id)}`),
   guests: () => request<Guest[]>("GET", "guests"),
@@ -106,7 +98,6 @@ export const api = {
   updateGuest: (id: string, changes: { password?: string; dashboard?: string }) =>
     request<Guest>("PATCH", `guests/${enc(id)}`, changes),
   deleteGuest: (id: string) => request<{ ok: true }>("DELETE", `guests/${enc(id)}`),
-  themes: () => request<string[]>("GET", "themes"),
   saveSettings: (settings: { public_url: string }) => request<StateView>("PUT", "settings", settings),
 };
 

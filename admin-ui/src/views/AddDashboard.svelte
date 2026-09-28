@@ -3,24 +3,20 @@
   import * as Card from "$lib/components/ui/card";
   import { Label } from "$lib/components/ui/label";
   import * as Select from "$lib/components/ui/select";
-  import { Separator } from "$lib/components/ui/separator";
-  import { api, type DashboardsView, type DashboardView, type ThemeSettings } from "$lib/api";
+  import { api, type DashboardsView, type DashboardView } from "$lib/api";
   import { message } from "$lib/errors";
   import { t } from "$lib/i18n";
   import Spinner from "$lib/widgets/Spinner.svelte";
-  import ThemeEditor from "$lib/widgets/ThemeEditor.svelte";
   import Analysis from "./Analysis.svelte";
   import StatusBadges from "./StatusBadges.svelte";
 
   let {
     available,
-    themes,
     onadded,
     oncancel,
     onerror,
   }: {
     available: DashboardsView["available"];
-    themes: string[];
     onadded: (data: DashboardsView, id: string) => void;
     oncancel: () => void;
     onerror: (message: string) => void;
@@ -30,7 +26,6 @@
   let preview = $state<DashboardView | null>(null);
   let loading = $state(false);
   let answers = $state<Record<string, string>>({});
-  let theme = $state<ThemeSettings>({});
   let busy = $state(false);
 
   const candidates = $derived(available.filter((d) => !d.added));
@@ -58,7 +53,7 @@
   async function add() {
     busy = true;
     try {
-      onadded(await api.addDashboard(id, theme, answers), id);
+      onadded(await api.addDashboard(id, answers), id);
     } catch (err) {
       onerror(message(err));
     } finally {
@@ -95,11 +90,6 @@
     {#if shown}
       <StatusBadges dashboard={shown} showGuests={false} />
       <Analysis dashboard={shown} onanswer={(q, value) => (answers = { ...answers, [q.key]: value })} />
-      <Separator />
-      <section class="grid gap-3">
-        <h3 class="font-medium">{t("dash.theme")}</h3>
-        <ThemeEditor value={theme} {themes} onchange={(v) => (theme = v)} />
-      </section>
     {/if}
   </Card.Content>
   <Card.Footer class="flex flex-wrap gap-2">
