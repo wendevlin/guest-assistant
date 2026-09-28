@@ -44,7 +44,7 @@ Browser ──► guest-assistant (Bun) ──► Home Assistant
 | Templates | only markdown templates that appear verbatim in the dashboard; `variables` are fixed by the proxy |
 | Registries | entity/device registries reduced to allowed entities and their devices |
 | Config | location, URLs and Assist are hidden |
-| User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` comes from the admin settings |
+| User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` comes from the dashboard settings on the admin page |
 
 Everything else (`execute_script`, `search/related`, `tag/list`, media
 browsing, energy, arbitrary REST paths, better-auth account management, …) is

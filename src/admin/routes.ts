@@ -43,8 +43,8 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 const Answers = z.record(z.string().max(2000), z.string().max(50));
 const DashboardInput = z.strictObject({ id: z.string().min(1).max(200), theme: ThemeSettings.optional(), answers: Answers.optional() });
 const DashboardPatch = z.strictObject({ theme: ThemeSettings.optional(), answers: Answers.optional() });
-const GuestInput = z.strictObject({ username: Username, password: Password, dashboard: z.string().min(1), theme: ThemeSettings.optional() });
-const GuestPatch = z.strictObject({ password: Password.optional(), dashboard: z.string().min(1).optional(), theme: ThemeSettings.optional() });
+const GuestInput = z.strictObject({ username: Username, password: Password, dashboard: z.string().min(1) });
+const GuestPatch = z.strictObject({ password: Password.optional(), dashboard: z.string().min(1).optional() });
 const SettingsInput = z.strictObject({ public_url: z.union([z.url({ protocol: /^https?$/ }), z.literal("")]) });
 const UrlInput = z.strictObject({ url: z.string().min(1).max(500) });
 const CodeInput = z.strictObject({ code: z.string().min(1).max(20) });

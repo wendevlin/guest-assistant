@@ -84,7 +84,6 @@ const en = {
 
   "theme.name": "Theme",
   "theme.default": "Home Assistant default",
-  "theme.inherit": "Like the dashboard",
   "theme.mode": "Mode",
   "theme.mode.auto": "Auto (follow the device)",
   "theme.mode.light": "Light",
@@ -103,7 +102,6 @@ const en = {
   "guests.new_password_hint": "Leave empty to keep the current password.",
   "guests.generate": "Generate",
   "guests.dashboard": "Dashboard",
-  "guests.theme": "Look (overrides the dashboard)",
   "guests.edit": "Edit",
   "guests.delete_confirm": "Delete the guest {name}?",
   "guests.created": "Guest {name} created. Password: {password}",
@@ -213,7 +211,6 @@ const de: Partial<Record<Key, string>> = {
 
   "theme.name": "Theme",
   "theme.default": "Home-Assistant-Standard",
-  "theme.inherit": "Wie das Dashboard",
   "theme.mode": "Modus",
   "theme.mode.auto": "Automatisch (wie das Gerät)",
   "theme.mode.light": "Hell",
@@ -232,7 +229,6 @@ const de: Partial<Record<Key, string>> = {
   "guests.new_password_hint": "Leer lassen, um das Passwort zu behalten.",
   "guests.generate": "Erzeugen",
   "guests.dashboard": "Dashboard",
-  "guests.theme": "Aussehen (überschreibt das Dashboard)",
   "guests.edit": "Bearbeiten",
   "guests.delete_confirm": "Gast {name} löschen?",
   "guests.created": "Gast {name} angelegt. Passwort: {password}",

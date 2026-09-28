@@ -48,7 +48,6 @@ export interface Guest {
   id: string;
   username: string;
   dashboard: string;
-  theme: ThemeSettings;
 }
 
 export interface DiscoveredHa {
@@ -102,9 +101,9 @@ export const api = {
     request<DashboardsView>("PATCH", `dashboards/${enc(id)}`, changes),
   removeDashboard: (id: string) => request<DashboardsView>("DELETE", `dashboards/${enc(id)}`),
   guests: () => request<Guest[]>("GET", "guests"),
-  createGuest: (guest: { username: string; password: string; dashboard: string; theme?: ThemeSettings }) =>
+  createGuest: (guest: { username: string; password: string; dashboard: string }) =>
     request<Guest>("POST", "guests", guest),
-  updateGuest: (id: string, changes: { password?: string; dashboard?: string; theme?: ThemeSettings }) =>
+  updateGuest: (id: string, changes: { password?: string; dashboard?: string }) =>
     request<Guest>("PATCH", `guests/${enc(id)}`, changes),
   deleteGuest: (id: string) => request<{ ok: true }>("DELETE", `guests/${enc(id)}`),
   themes: () => request<string[]>("GET", "themes"),

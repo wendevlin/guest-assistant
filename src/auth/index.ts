@@ -107,12 +107,6 @@ export function createAuth({ db, publicUrl, port }: AuthOptions) {
           // Never settable through any client-facing endpoint.
           input: false,
         },
-        /** JSON-encoded ThemeSettings overriding the dashboard's. */
-        theme: {
-          type: "string",
-          required: false,
-          input: false,
-        },
       },
     },
   });

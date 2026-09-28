@@ -23,7 +23,8 @@ const LegacyConfig = z.object({
       z.object({
         id: z.string().min(1),
         theme: ThemeSettings.optional(),
-        users: z.array(z.object({ username: Username, password: Password, theme: ThemeSettings.optional() })).default([]),
+        // per-user theme overrides of old configs are ignored; the look is set per dashboard
+        users: z.array(z.object({ username: Username, password: Password })).default([]),
       }),
     )
     .default([]),
@@ -54,8 +55,8 @@ export async function importLegacyConfig(runtime: Runtime, path: string): Promis
   for (const d of config.dashboards) {
     for (const u of d.users) {
       const guest = existing.get(u.username.toLowerCase());
-      if (guest) await runtime.guests.update(guest.id, { password: u.password, dashboard: d.id, theme: u.theme ?? {} });
-      else await runtime.guests.create({ username: u.username, password: u.password, dashboard: d.id, theme: u.theme });
+      if (guest) await runtime.guests.update(guest.id, { password: u.password, dashboard: d.id });
+      else await runtime.guests.create({ username: u.username, password: u.password, dashboard: d.id });
     }
   }
 

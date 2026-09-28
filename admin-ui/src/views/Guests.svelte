@@ -9,20 +9,16 @@
   import { Label } from "$lib/components/ui/label";
   import * as Select from "$lib/components/ui/select";
   import * as Table from "$lib/components/ui/table";
-  import { api, generatePassword, type DashboardView, type Guest, type ThemeSettings } from "$lib/api";
+  import { api, generatePassword, type DashboardView, type Guest } from "$lib/api";
   import { message } from "$lib/errors";
   import { t } from "$lib/i18n";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
-  import ThemeEditor from "$lib/widgets/ThemeEditor.svelte";
-
-  let { themes }: { themes: string[] } = $props();
 
   interface Draft {
     username: string;
     password: string;
     dashboard: string;
-    theme: ThemeSettings;
   }
 
   let guests = $state<Guest[] | null>(null);
@@ -31,7 +27,7 @@
   let notice = $state<string | null>(null);
   /** "new" or the id of the guest being edited */
   let editing = $state<string | null>(null);
-  let draft = $state<Draft>({ username: "", password: "", dashboard: "", theme: {} });
+  let draft = $state<Draft>({ username: "", password: "", dashboard: "" });
   let deleting = $state<Guest | null>(null);
   let confirmOpen = $state(false);
 
@@ -50,13 +46,13 @@
   function startNew() {
     notice = null;
     editing = "new";
-    draft = { username: "", password: generatePassword(), dashboard: dashboards[0]?.id ?? "", theme: {} };
+    draft = { username: "", password: generatePassword(), dashboard: dashboards[0]?.id ?? "" };
   }
 
   function startEdit(g: Guest) {
     notice = null;
     editing = g.id;
-    draft = { username: g.username, password: "", dashboard: g.dashboard, theme: g.theme };
+    draft = { username: g.username, password: "", dashboard: g.dashboard };
   }
 
   async function save(e: SubmitEvent) {
@@ -67,7 +63,7 @@
         await api.createGuest({ ...draft });
         notice = t("guests.created", { name: draft.username, password: draft.password });
       } else if (editing) {
-        await api.updateGuest(editing, { dashboard: draft.dashboard, theme: draft.theme, ...(draft.password ? { password: draft.password } : {}) });
+        await api.updateGuest(editing, { dashboard: draft.dashboard, ...(draft.password ? { password: draft.password } : {}) });
       }
       editing = null;
       await load();
@@ -149,10 +145,6 @@
                 </Select.Root>
               </div>
             </div>
-            <section class="grid gap-3">
-              <h3 class="font-medium">{t("guests.theme")}</h3>
-              <ThemeEditor inherit value={draft.theme} {themes} onchange={(v) => (draft.theme = v)} />
-            </section>
           </form>
         </Card.Content>
         <Card.Footer class="flex flex-wrap gap-2">

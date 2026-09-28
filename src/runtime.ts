@@ -6,7 +6,7 @@ import { Guests } from "./guests";
 import { HaClient, HaCommandError } from "./ha/client";
 import type { HaEndpoint } from "./ha/endpoint";
 import type { HaSettings, Store } from "./store";
-import { parseTheme, resolveTheme, type GuestTheme, type ThemeSettings } from "./theme";
+import { resolveTheme, type GuestTheme, type ThemeSettings } from "./theme";
 
 export type ConnectionState = "unconfigured" | "connecting" | "connected" | "error";
 export type Mode = "standalone" | "app";
@@ -290,8 +290,9 @@ export class Runtime {
     return this.store.getDashboard(id)?.theme ?? {};
   }
 
-  themeFor(dashboardId: string, guestTheme: unknown): GuestTheme {
-    return resolveTheme(this.dashboardTheme(dashboardId), parseTheme(guestTheme));
+  /** The look guests of a dashboard get; set per dashboard only. */
+  themeFor(dashboardId: string): GuestTheme {
+    return resolveTheme(this.dashboardTheme(dashboardId));
   }
 
   async listThemes(): Promise<string[]> {
@@ -301,12 +302,12 @@ export class Runtime {
 
   // ── guests ──────────────────────────────────────────────────────────────
 
-  async createGuest(input: { username: string; password: string; dashboard: string; theme?: ThemeSettings }) {
+  async createGuest(input: { username: string; password: string; dashboard: string }) {
     if (!this.store.getDashboard(input.dashboard)) throw new RuntimeError(`Dashboard "${input.dashboard}" is not a guest dashboard`);
     return this.guests.create(input);
   }
 
-  async updateGuest(id: string, changes: { password?: string; dashboard?: string; theme?: ThemeSettings }) {
+  async updateGuest(id: string, changes: { password?: string; dashboard?: string }) {
     if (changes.dashboard !== undefined && !this.store.getDashboard(changes.dashboard)) {
       throw new RuntimeError(`Dashboard "${changes.dashboard}" is not a guest dashboard`);
     }

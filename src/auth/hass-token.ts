@@ -29,7 +29,7 @@ export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboar
       );
     }
 
-    const theme = runtime.themeFor(dashboard.id, (session.user as { theme?: string | null }).theme);
+    const theme = runtime.themeFor(dashboard.id);
     const token = signJWT({
       sub: session.user.id,
       sid: session.session.id,

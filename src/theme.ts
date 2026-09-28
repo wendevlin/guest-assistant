@@ -1,9 +1,6 @@
 import z from "zod";
 
-/**
- * How the guest UI looks. Set on a dashboard; a guest's own settings override
- * single fields of it.
- */
+/** How the guest UI looks. Set per dashboard. */
 export const ThemeSettings = z.strictObject({
   /** Name of a theme defined in HA; omitted = HA's default theme. */
   name: z.string().min(1).max(200).optional(),
@@ -22,9 +19,9 @@ export interface GuestTheme {
   guest_can_change_mode: boolean;
 }
 
-/** Defaults, then the dashboard's settings, then the guest's own. */
-export function resolveTheme(dashboard?: ThemeSettings, guest?: ThemeSettings): GuestTheme {
-  return { mode: "auto", guest_can_change_mode: false, ...dropUndefined(dashboard), ...dropUndefined(guest) };
+/** Defaults, overridden by the dashboard's settings. */
+export function resolveTheme(dashboard?: ThemeSettings): GuestTheme {
+  return { mode: "auto", guest_can_change_mode: false, ...dropUndefined(dashboard) };
 }
 
 /** Parses a stored theme (JSON string or object); invalid data counts as "no settings". */

@@ -348,9 +348,11 @@ describe("admin decisions on a dashboard", () => {
     const links = guests.find((g) => g.username === "links")!;
     const { ws, cookie } = await connectGuest("links", "links-pass-1");
 
-    const moved = await a.call("PATCH", `guests/${links.id}`, { dashboard: "guest-dash", theme: { mode: "dark" } });
+    const moved = await a.call("PATCH", `guests/${links.id}`, { dashboard: "guest-dash" });
     expect(moved.status).toBe(200);
-    expect(moved.body).toMatchObject({ dashboard: "guest-dash", theme: { mode: "dark" } });
+    expect(moved.body).toEqual({ id: links.id, username: "links", dashboard: "guest-dash" });
+    // the look is set per dashboard only
+    expect((await a.call("PATCH", `guests/${links.id}`, { theme: { mode: "dark" } })).status).toBe(400);
     await ws.closed;
     expect((await env.hassToken(cookie)).status).toBe(401);
 
@@ -458,10 +460,11 @@ describe("config.yaml import", () => {
     expect(runtime.publicUrl).toBe("https://guests.example.com");
     expect(runtime.store.listDashboards()).toEqual([{ id: "guest-dash", theme: { mode: "dark" }, answers: {} }]);
     const guests = await runtime.guests.list();
-    expect(guests).toMatchObject([{ username: "Visitor", dashboard: "guest-dash", theme: { guest_can_change_mode: true } }]);
+    expect(guests).toMatchObject([{ username: "Visitor", dashboard: "guest-dash" }]);
     await runtime.connect();
     expect(runtime.state).toBe("connected");
-    expect(runtime.themeFor("guest-dash", JSON.stringify(guests[0]!.theme))).toEqual({ mode: "dark", guest_can_change_mode: true });
+    // old per-user overrides are ignored
+    expect(runtime.themeFor("guest-dash")).toEqual({ mode: "dark", guest_can_change_mode: false });
     runtime.close();
     ha.stop();
   });

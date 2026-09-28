@@ -137,9 +137,11 @@
             <Tabs.Trigger value={name}>{t(`tabs.${name}`)}</Tabs.Trigger>
           {/each}
         </Tabs.List>
-        <Tabs.Content value="dashboards"><Dashboards {themes} /></Tabs.Content>
-        <Tabs.Content value="guests"><Guests {themes} /></Tabs.Content>
-        <Tabs.Content value="settings"><Settings {info} onstate={(s) => (info = s)} /></Tabs.Content>
+        <!-- Each view is created when its tab opens, so it loads current data
+             (e.g. a dashboard added a moment ago shows up for new guests). -->
+        <Tabs.Content value="dashboards">{#if tab === "dashboards"}<Dashboards {themes} />{/if}</Tabs.Content>
+        <Tabs.Content value="guests">{#if tab === "guests"}<Guests />{/if}</Tabs.Content>
+        <Tabs.Content value="settings">{#if tab === "settings"}<Settings {info} onstate={(s) => (info = s)} />{/if}</Tabs.Content>
       </Tabs.Root>
     {/if}
   </main>

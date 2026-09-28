@@ -1,6 +1,5 @@
 import z from "zod";
 import type { Auth } from "./auth";
-import { parseTheme, ThemeSettings } from "./theme";
 
 /** Same rule as better-auth's username plugin. */
 export const USERNAME_RE = /^[a-zA-Z0-9_.]+$/;
@@ -16,7 +15,6 @@ export interface Guest {
   id: string;
   username: string;
   dashboard: string;
-  theme: ThemeSettings;
 }
 
 export class GuestError extends Error {}
@@ -28,7 +26,6 @@ interface UserRow {
   username?: string | null;
   displayUsername?: string | null;
   dashboard?: string;
-  theme?: string | null;
 }
 
 function emailFor(username: string): string {
@@ -40,7 +37,6 @@ function toGuest(u: UserRow): Guest {
     id: u.id,
     username: u.displayUsername || u.username || u.name,
     dashboard: u.dashboard ?? "",
-    theme: parseTheme(u.theme),
   };
 }
 
@@ -69,7 +65,7 @@ export class Guests {
     return user ? toGuest(user) : undefined;
   }
 
-  async create(input: { username: string; password: string; dashboard: string; theme?: ThemeSettings }): Promise<Guest> {
+  async create(input: { username: string; password: string; dashboard: string }): Promise<Guest> {
     const username = Username.parse(input.username);
     const password = Password.parse(input.password);
     const { ctx, adapter } = await this.adapter();
@@ -82,7 +78,6 @@ export class Guests {
         username: username.toLowerCase(),
         displayUsername: username,
         dashboard: input.dashboard,
-        theme: JSON.stringify(ThemeSettings.parse(input.theme ?? {})),
       },
       { method: "admin" },
     );
@@ -96,7 +91,7 @@ export class Guests {
   }
 
   /** Returns the updated guest. Password and dashboard changes end the guest's sessions. */
-  async update(id: string, changes: { password?: string; dashboard?: string; theme?: ThemeSettings }): Promise<Guest> {
+  async update(id: string, changes: { password?: string; dashboard?: string }): Promise<Guest> {
     const { ctx, adapter } = await this.adapter();
     const existing = (await adapter.findUserById(id)) as unknown as UserRow | null;
     if (!existing) throw new GuestError("Guest not found");
@@ -110,7 +105,6 @@ export class Guests {
       fields.dashboard = changes.dashboard;
       endSessions = true;
     }
-    if (changes.theme !== undefined) fields.theme = JSON.stringify(ThemeSettings.parse(changes.theme));
     if (Object.keys(fields).length > 0) await adapter.updateUser(id, fields);
     if (endSessions) await adapter.deleteUserSessions(id);
     return (await this.get(id))!;
