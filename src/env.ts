@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 /**
  * Start-up settings that cannot live in the database because they are needed
@@ -22,6 +22,8 @@ export interface Env {
   ingressPort: number;
   /** Old config file that is imported once when the database is still empty. */
   legacyConfigPath: string;
+  /** Built admin page (`bun run build:admin`). */
+  adminUiDir: string;
 }
 
 function intVar(name: string, fallback: number): number {
@@ -41,5 +43,6 @@ export function readEnv(): Env {
     supervisorToken,
     ingressPort: intVar("INGRESS_PORT", 8099),
     legacyConfigPath: process.env.CONFIG_FILE ?? "config.yaml",
+    adminUiDir: resolve(process.env.ADMIN_UI_DIR ?? join(import.meta.dir, "../admin-ui/dist")),
   };
 }

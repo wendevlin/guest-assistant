@@ -76,15 +76,17 @@ describe("fresh installation (standalone)", () => {
     expect((await a.call("POST", "setup/connect", { url: env.ha.url })).status).toBe(401);
   });
 
-  test("the admin page is served with relative asset URLs", async () => {
+  test("the built admin page is served with relative asset URLs", async () => {
     const res = await fetch(`${env.url}/admin/`);
     expect(res.status).toBe(200);
-    const html = await res.text();
-    expect(html).toContain('src="app.js"');
+    expect(await res.text()).toContain('src="./app-abcd1234.js"');
     expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
-    const js = await fetch(`${env.url}/admin/app.js`);
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+    const js = await fetch(`${env.url}/admin/app-abcd1234.js`);
     expect(js.status).toBe(200);
-    expect(await js.text()).toContain("ga-admin");
+    expect(js.headers.get("cache-control")).toContain("immutable");
+    expect((await fetch(`${env.url}/admin/../package.json`)).status).toBe(404);
+    expect((await fetch(`${env.url}/admin/%2e%2e/%2e%2e/package.json`)).status).toBe(404);
     expect((await fetch(`${env.url}/admin`, { redirect: "manual" })).status).toBe(308);
   });
 

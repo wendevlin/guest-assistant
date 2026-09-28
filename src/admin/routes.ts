@@ -12,7 +12,7 @@ import { RuntimeError, type Runtime } from "../runtime";
 import { connectAsApp, connectWithAdmin } from "../setup/connect";
 import { ThemeSettings } from "../theme";
 import { ADMIN_COOKIE, AdminSessions, cookie, OAUTH_COOKIE, readCookie, type AdminSession } from "./sessions";
-import { adminAssets } from "./ui-bundle";
+import { createAssetHandler } from "./assets";
 
 /**
  * The admin page and its JSON API.
@@ -56,6 +56,7 @@ export interface AdminOptions {
 
 export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }: AdminOptions) {
   const appMode = runtime.mode === "app";
+  const serveAsset = createAssetHandler(runtime.env.adminUiDir);
   const supervisorToken = runtime.env.supervisorToken;
 
   function browserOrigin(req: Request): string {
@@ -345,19 +346,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       if (path.startsWith("api/")) return await api(req, path.slice(4), await identify(req, server));
       if (req.method !== "GET" && req.method !== "HEAD") return new Response("Method Not Allowed", { status: 405 });
       if (path === "callback" && !appMode) return await oauthCallback(req);
-      const assets = await adminAssets();
-      const asset = assets.get(path === "" ? "index.html" : path);
-      if (!asset) return new Response("Not Found", { status: 404 });
-      return new Response(asset.body, {
-        headers: {
-          "content-type": asset.type,
-          "cache-control": "no-cache",
-          "content-security-policy":
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'",
-          "x-content-type-options": "nosniff",
-          "referrer-policy": "no-referrer",
-        },
-      });
+      return await serveAsset(path);
     } catch (err) {
       if (err instanceof HttpError) return json({ error: err.message }, err.status);
       if (err instanceof RuntimeError || err instanceof GuestError || err instanceof z.ZodError) {

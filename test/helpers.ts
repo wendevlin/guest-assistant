@@ -32,6 +32,7 @@ export function testEnvConfig(port: number): Env {
     frontendRepo: "./test/fixtures/frontend-repo",
     ingressPort: port + 1,
     legacyConfigPath: "/nonexistent/config.yaml",
+    adminUiDir: "./test/fixtures/admin-ui",
   };
 }
 
@@ -44,11 +45,12 @@ export function randomPort(): number {
  * already connected with the mock's non-admin token and has the test
  * dashboards and guests; otherwise it starts like a fresh installation.
  */
-export async function startTestEnv({ configured = true, mode = "standalone" as Mode } = {}): Promise<TestEnv> {
+export async function startTestEnv({ configured = true, mode = "standalone" as Mode, adminUiDir = "" } = {}): Promise<TestEnv> {
   const ha = startMockHA();
   const port = randomPort();
   const store = Store.memory();
-  const runtime = new Runtime(testEnvConfig(port), store, mode);
+  const env = testEnvConfig(port);
+  const runtime = new Runtime(adminUiDir ? { ...env, adminUiDir } : env, store, mode);
   await runtime.init();
 
   if (configured) {

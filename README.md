@@ -134,6 +134,7 @@ A few settings are environment variables (Bun also reads a `.env` file, see
 | `GUEST_ASSISTANT_FRONTEND_REPO` | | serve the guest frontend from a `guest-assistant-frontend` checkout instead of `./public` |
 | `CONFIG_FILE` | `config.yaml` | old config file to import once |
 | `INGRESS_PORT` | `8099` | admin page as an app |
+| `ADMIN_UI_DIR` | `admin-ui/dist` | built admin page |
 
 Guests change their language (and, if allowed, light/dark mode) in the
 settings dialog; the choice is stored on their device only.
@@ -141,9 +142,10 @@ settings dialog; the choice is stored on their device only.
 ## Running
 
 ```
-bun install
-bun run start          # or: bun run dev (watch mode)
-bun run typecheck
+bun install            # installs the proxy and the admin-ui workspace
+bun run build:admin    # builds the admin page into admin-ui/dist
+bun run start          # or: bun run dev (rebuilds the admin page and restarts the proxy on changes)
+bun run typecheck      # tsc for the proxy, svelte-check for the admin page
 bun test
 ```
 
@@ -152,8 +154,15 @@ The guest frontend is served from `./public`, or, like HA core's
 `GUEST_ASSISTANT_FRONTEND_REPO` to the root of the sibling repository
 `guest-assistant-frontend` (a fork of the Home Assistant frontend) and the
 proxy serves its `guest-assistant/dist`. `guest-assistant/script/develop`
-there builds into that directory. The admin page is a small Lit app in
-`src/admin/ui` that Bun bundles at start-up.
+there builds into that directory.
+
+The admin page lives in `admin-ui/`: Svelte 5 with shadcn-svelte components,
+built by Bun alone (`admin-ui/build.ts` with `bun-plugin-svelte` and
+`bun-plugin-tailwind`, no Vite, no SvelteKit). Its output uses relative URLs,
+so it works under `/admin/` and behind HA's ingress prefix. The proxy serves
+the built files from `admin-ui/dist` (`ADMIN_UI_DIR`). Add components with
+`bunx shadcn-svelte@latest add <name>` inside `admin-ui/`; bits-ui state
+attributes are mapped to the components' `data-*` variants in `src/app.css`.
 
 ## Endpoints the frontend uses
 
