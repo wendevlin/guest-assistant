@@ -1,6 +1,7 @@
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
-import { haWsUrl, type Config, type GuestTheme } from "../config";
 import type { Dashboard } from "../dashboard";
+import { haWsUrl, type HaEndpoint } from "../ha/endpoint";
+import type { GuestTheme } from "../theme";
 import { verifyJWT } from "../jwt";
 import { COMMANDS, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand } from "./ws-commands";
 
@@ -22,9 +23,8 @@ type GuestSocket = ServerWebSocket<ConnState>;
 
 const MAX_MESSAGE_BYTES = 64 * 1024;
 
-export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>) {
-  const upstreamUrl = haWsUrl(config["home-assistant"]);
-  const token = config["home-assistant"].long_lived_access_token;
+export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: ReadonlyMap<string, Dashboard>) {
+  const all = new Set<GuestSocket>();
   const byUser = new Map<string, Set<GuestSocket>>();
   const byDashboard = new Map<string, Set<GuestSocket>>();
 
@@ -38,12 +38,14 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
 
   function register(ws: GuestSocket): void {
     const { userId, dashboard } = ws.data;
+    all.add(ws);
     if (userId) (byUser.get(userId) ?? byUser.set(userId, new Set()).get(userId)!).add(ws);
     if (dashboard) (byDashboard.get(dashboard.id) ?? byDashboard.set(dashboard.id, new Set()).get(dashboard.id)!).add(ws);
   }
 
   function unregister(ws: GuestSocket): void {
     const { userId, dashboard } = ws.data;
+    all.delete(ws);
     if (userId) byUser.get(userId)?.delete(ws);
     if (dashboard) byDashboard.get(dashboard.id)?.delete(ws);
   }
@@ -70,6 +72,9 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
     const dashboard = dashboards.get(payload.dashboard);
     if (!dashboard) return fail("Invalid dashboard");
     if (dashboard.status !== "ok") return fail("Dashboard not available");
+    const ha = endpoint();
+    if (!ha) return fail("Not connected to Home Assistant");
+    const token = ha.token;
 
     ws.data.userId = payload.sub;
     ws.data.dashboard = dashboard;
@@ -77,7 +82,7 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
     ws.data.phase = "connecting_ha";
     register(ws);
 
-    const haWs = new WebSocket(upstreamUrl);
+    const haWs = new WebSocket(haWsUrl(ha));
     ws.data.haWs = haWs;
 
     haWs.addEventListener("message", (event) => {
@@ -298,7 +303,12 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
     }
   }
 
-  return { handlers, upgrade, closeForUser, closeForDashboard, dashboardChanged };
+  /** Drops every guest connection, e.g. when the HA connection changed. */
+  function closeAll(): void {
+    for (const ws of [...all]) terminate(ws);
+  }
+
+  return { handlers, upgrade, closeForUser, closeForDashboard, closeAll, dashboardChanged };
 }
 
 export type WsProxy = ReturnType<typeof createWsProxy>;

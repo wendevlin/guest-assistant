@@ -1,8 +1,6 @@
 import { betterAuth } from "better-auth";
 import { username } from "better-auth/plugins";
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import type { Config } from "../config";
+import type { Database } from "bun:sqlite";
 
 /**
  * Only these better-auth endpoints are reachable. Everything else is disabled
@@ -41,17 +39,39 @@ const ALL_KNOWN_AUTH_PATHS = [
 
 export const DISABLED_AUTH_PATHS = ALL_KNOWN_AUTH_PATHS.filter((p) => !ENABLED_AUTH_PATHS.includes(p));
 
-export function createAuth(config: Pick<Config, "base_url">, databasePath = "data/guest-assistant.db") {
-  if (databasePath !== ":memory:") {
-    mkdirSync(databasePath.replace(/[^/]+$/, "") || ".", { recursive: true });
-  }
-  const baseURL = new URL(config.base_url);
+export interface AuthOptions {
+  db: Database;
+  /** URL guests use; decides about secure cookies. */
+  publicUrl?: string;
+  /** Guest port, for the fallback base URL. */
+  port: number;
+}
+
+/**
+ * Origins allowed to post to the auth endpoints: the configured public URL
+ * and the host the request was sent to, over http or https (a TLS-terminating
+ * reverse proxy forwards plain http). A cross-site page cannot fake either;
+ * its Origin header names its own site.
+ */
+function trustedOriginsFor(publicUrl: string | undefined) {
+  return (request?: Request): string[] => {
+    const origins = publicUrl ? [new URL(publicUrl).origin] : [];
+    if (request) {
+      const host = new URL(request.url).host;
+      origins.push(`http://${host}`, `https://${host}`);
+    }
+    return origins;
+  };
+}
+
+export function createAuth({ db, publicUrl, port }: AuthOptions) {
+  const baseURL = new URL(publicUrl ?? `http://localhost:${port}`);
   const secure = baseURL.protocol === "https:";
 
   return betterAuth({
     baseURL: baseURL.origin,
-    trustedOrigins: [baseURL.origin],
-    database: new Database(databasePath),
+    trustedOrigins: trustedOriginsFor(publicUrl),
+    database: db,
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
@@ -71,6 +91,8 @@ export function createAuth(config: Pick<Config, "base_url">, databasePath = "dat
       },
     },
     advanced: {
+      // The proxy runs the migrations itself at start-up (Runtime.init).
+      database: { validateSchema: false },
       useSecureCookies: secure,
       ipAddress: {
         // Set by server.ts from the TCP peer; never trusted from the client.
@@ -83,6 +105,12 @@ export function createAuth(config: Pick<Config, "base_url">, databasePath = "dat
           type: "string",
           required: true,
           // Never settable through any client-facing endpoint.
+          input: false,
+        },
+        /** JSON-encoded ThemeSettings overriding the dashboard's. */
+        theme: {
+          type: "string",
+          required: false,
           input: false,
         },
       },

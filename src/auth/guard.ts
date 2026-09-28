@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Dashboard } from "../dashboard";
 import { verifyJWT } from "../jwt";
-import type { Auth } from "./index";
+import type { Runtime } from "../runtime";
 
 export interface GuestIdentity {
   userId: string;
@@ -27,8 +27,9 @@ const SESSION_CACHE_TTL_MS = 60_000;
  * the hass-token JWT (Authorization: Bearer) or the better-auth session cookie.
  * Returns a 401/403 Response when access must be denied.
  */
-export function createGuard(auth: Auth, dashboards: Map<string, Dashboard>) {
+export function createGuard(runtime: Pick<Runtime, "auth" | "dashboards">) {
   const sessionCache = new Map<string, CachedSession>();
+  const dashboards = runtime.dashboards;
 
   function resolveDashboard(userId: string, dashboardId: string | undefined): GuardResult {
     const dashboard = dashboardId ? dashboards.get(dashboardId) : undefined;
@@ -37,7 +38,7 @@ export function createGuard(auth: Auth, dashboards: Map<string, Dashboard>) {
     return { userId, dashboard };
   }
 
-  return async function requireGuest(request: Request): Promise<GuardResult> {
+  async function requireGuest(request: Request): Promise<GuardResult> {
     const authHeader = request.headers.get("authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const payload = verifyJWT(authHeader.slice(7));
@@ -54,7 +55,7 @@ export function createGuard(auth: Auth, dashboards: Map<string, Dashboard>) {
       return resolveDashboard(cached.userId, cached.dashboardId);
     }
 
-    const session = await auth.api.getSession({ headers: request.headers });
+    const session = await runtime.auth.api.getSession({ headers: request.headers });
     if (!session) {
       sessionCache.delete(cacheKey);
       return new Response("Unauthorized", { status: 401 });
@@ -69,7 +70,11 @@ export function createGuard(auth: Auth, dashboards: Map<string, Dashboard>) {
       });
     }
     return resolveDashboard(session.user.id, dashboardId);
-  };
+  }
+
+  /** Forgets cached sessions, e.g. after a guest was moved or deleted. */
+  requireGuest.invalidate = () => sessionCache.clear();
+  return requireGuest;
 }
 
 export type RequireGuest = ReturnType<typeof createGuard>;

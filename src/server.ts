@@ -1,23 +1,17 @@
 import type { BunRequest, Server } from "bun";
 import { resolve, sep } from "node:path";
-import type { Auth } from "./auth";
+import { createAdmin } from "./admin/routes";
+import type { AdminSessions } from "./admin/sessions";
 import { createGuard } from "./auth/guard";
 import { createHassTokenHandler } from "./auth/hass-token";
-import { themeForUser, type Config } from "./config";
-import type { Dashboard } from "./dashboard";
-import type { HaClient } from "./ha/client";
 import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
+import type { Runtime } from "./runtime";
 
-export interface ServerDeps {
-  config: Config;
-  dashboards: Map<string, Dashboard>;
-  auth: Auth;
-  /** The proxy's own HA connection; reported to the frontend via /api/guest-assistant/status. */
-  client?: Pick<HaClient, "connected">;
-}
+const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/hacsfiles/", "/admin/"];
 
-const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/hacsfiles/"];
+/** Standalone, the admin page lives here on the guest port. */
+export const ADMIN_BASE = "/admin/";
 
 /**
  * better-auth's rate limiter needs a client IP header. We set it ourselves from
@@ -34,23 +28,28 @@ function withClientIp(req: Request, server: Server<ConnState>): Request {
   return new Request(req, { headers });
 }
 
-export function createServer({ config, dashboards, auth, client }: ServerDeps, port: number = config.port) {
-  const requireGuest = createGuard(auth, dashboards);
-  const wsProxy = createWsProxy(config, dashboards);
-  const httpRoutes = createHttpRoutes(config, requireGuest);
-  const hassToken = createHassTokenHandler(auth, dashboards, (username) => themeForUser(config, username));
+/** The server guests connect to. Standalone, it also serves the admin page under /admin/. */
+export function createServer(runtime: Runtime, sessions: AdminSessions, port: number = runtime.env.port) {
+  const requireGuest = createGuard(runtime);
+  const endpoint = () => runtime.endpoint;
+  const wsProxy = createWsProxy(endpoint, runtime.dashboards);
+  const httpRoutes = createHttpRoutes(endpoint, requireGuest);
+  const hassToken = createHassTokenHandler(runtime);
+  const admin = runtime.mode === "standalone" ? createAdmin(runtime, sessions, { base: ADMIN_BASE }) : null;
 
-  // A dashboard that turns invalid at runtime drops its guests immediately;
-  // a changed allowlist makes them reconnect.
-  for (const dashboard of dashboards.values()) {
-    dashboard.onChange((d) => wsProxy.dashboardChanged(d));
-  }
+  // A dashboard that turns invalid drops its guests immediately; a changed
+  // allowlist makes them reconnect. Account changes end live connections.
+  runtime.on("dashboardChanged", (d) => wsProxy.dashboardChanged(d));
+  runtime.on("dashboardRemoved", (id) => wsProxy.closeForDashboard(id));
+  runtime.on("guestChanged", (id) => {
+    requireGuest.invalidate();
+    wsProxy.closeForUser(id);
+  });
+  runtime.on("connectionChanged", () => wsProxy.closeAll());
 
   // Like HA core's `development_repo`: point at the frontend repository root,
   // the build output inside it is served.
-  const frontendRoot = config.frontend_development_repo
-    ? resolve(config.frontend_development_repo, "guest-assistant/dist")
-    : resolve("./public");
+  const frontendRoot = runtime.env.frontendRepo ? resolve(runtime.env.frontendRepo, "guest-assistant/dist") : resolve("./public");
 
   /** Resolves a request path inside the frontend build, or null if outside/missing. */
   async function frontendFile(pathname: string) {
@@ -95,18 +94,21 @@ export function createServer({ config, dashboards, auth, client }: ServerDeps, p
     return new Response("Not Found", { status: 404 });
   }
 
+  const adminHandler = (req: BunRequest, server: Server<ConnState>) =>
+    admin ? admin(req, server as Server<unknown>) : new Response("Not Found", { status: 404 });
+
   const server = Bun.serve({
     port,
     routes: {
       "/api/auth/hass-token": { GET: hassToken },
-      "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => auth.handler(withClientIp(req, server)),
+      "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => runtime.auth.handler(withClientIp(req, server)),
       // Lets the frontend tell "proxy unreachable" from "proxy cannot reach
       // HA" while it reconnects. Public like HA's own /manifest.json; it only
       // reveals whether the upstream connection is up.
       "/api/guest-assistant/status": {
         GET: () =>
           Response.json(
-            { home_assistant: client?.connected === false ? "disconnected" : "connected" },
+            { home_assistant: runtime.client?.connected ? "connected" : "disconnected" },
             { headers: { "cache-control": "no-store" } },
           ),
       },
@@ -115,10 +117,18 @@ export function createServer({ config, dashboards, auth, client }: ServerDeps, p
       "/static/*": { GET: staticHandler, HEAD: staticHandler },
       // Everything under /api that is not listed above is denied.
       "/api/*": new Response("Not Found", { status: 404 }),
+      "/admin": adminHandler,
+      "/admin/*": adminHandler,
     },
     websocket: wsProxy.handlers,
     fetch: serveFrontend,
   });
 
   return { server, wsProxy };
+}
+
+/** As an app, the admin page is served on the ingress port only. */
+export function createIngressServer(runtime: Runtime, sessions: AdminSessions, port: number = runtime.env.ingressPort) {
+  const admin = createAdmin(runtime, sessions, { base: "/" });
+  return Bun.serve({ port, fetch: (req, server) => admin(req, server) });
 }

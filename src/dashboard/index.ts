@@ -1,9 +1,19 @@
 import type { HaClient } from "../ha/client";
 import { HaCommandError } from "../ha/client";
 import { entityDomain, extract, isObj, type Obj } from "./extract";
+import {
+  decide,
+  findQuestions,
+  isAnswered,
+  MEDIA_PLAYER_GROUPING,
+  rewriteForGuests,
+  type Decisions,
+  type Question,
+} from "./interactions";
 import { validate, type Violation } from "./validate";
 
 export type { Violation } from "./validate";
+export type { Question } from "./interactions";
 export { entityDomain, isEntityId } from "./extract";
 
 export type DashboardStatus = "loading" | "ok" | "rejected";
@@ -11,6 +21,11 @@ export type DashboardStatus = "loading" | "ok" | "rejected";
 interface RegistryDisplayEntry {
   ei: string;
   di?: string;
+}
+
+interface StateLike {
+  entity_id?: string;
+  attributes?: { supported_features?: number };
 }
 
 /**
@@ -29,6 +44,10 @@ export class Dashboard {
   private _templates = new Map<string, Obj>();
   private _mediaSources = new Set<string>();
   private listeners: Array<(d: Dashboard) => void> = [];
+  private _questions: Question[] = [];
+  private _answers: Readonly<Record<string, string>> = {};
+  private _decisions: Decisions = { allowedUrls: new Set(), groupablePlayers: new Set() };
+  private quiet = false;
 
   /**
    * Whether the last (re)load changed what guests may access (entities,
@@ -37,8 +56,9 @@ export class Dashboard {
    */
   accessChanged = false;
 
-  constructor(id: string) {
+  constructor(id: string, answers: Readonly<Record<string, string>> = {}) {
     this.id = id;
+    this._answers = answers;
   }
 
   /** The url_path value HA expects (null for the default dashboard). */
@@ -62,13 +82,46 @@ export class Dashboard {
     return this._mediaSources;
   }
 
+  /** Everything the admin has to decide about this dashboard (see interactions.ts). */
+  get questions(): readonly Question[] {
+    return this._questions;
+  }
+  get answers(): Readonly<Record<string, string>> {
+    return this._answers;
+  }
+  /** Questions without a valid answer; the restrictive option applies to them. */
+  get pending(): Question[] {
+    return this._questions.filter((q) => !isAnswered(q, this._answers));
+  }
+
+  /** Whether guests may group this media player with the dashboard's other players. */
+  mediaGroupAllowed(entityId: string): boolean {
+    return this._decisions.groupablePlayers.has(entityId);
+  }
+
+  /** The dashboard config as guests get it (blocked links replaced). */
+  guestConfig(config: unknown): unknown {
+    return rewriteForGuests(config, this.urlPath, this._decisions);
+  }
+
+  /**
+   * Stores the admin's answers. Guests get a lovelace_updated so their
+   * frontend fetches the (differently rewritten) config again.
+   */
+  setAnswers(answers: Readonly<Record<string, string>>): void {
+    this._answers = answers;
+    this._decisions = decide(this._questions, answers);
+    this.accessChanged = false;
+    this.emit();
+  }
+
   /** Notified after every (re)load, e.g. to close connections of rejected dashboards. */
   onChange(listener: (d: Dashboard) => void): void {
     this.listeners.push(listener);
   }
 
-  /** For tests and synthetic setups. */
-  applyConfig(config: Obj): void {
+  /** For tests and synthetic setups; `groupablePlayers` comes from HA's states in `load`. */
+  applyConfig(config: Obj, groupablePlayers: Iterable<string> = []): void {
     const before = this.accessKey();
     const violations = validate(config);
     const extraction = extract(config);
@@ -76,6 +129,9 @@ export class Dashboard {
     this._domains = new Set([...extraction.entities].map(entityDomain));
     this._templates = extraction.templates;
     this._mediaSources = extraction.mediaSources;
+    const players = [...groupablePlayers].filter((id) => extraction.entities.has(id));
+    this._questions = findQuestions(config, this.urlPath, players);
+    this._decisions = decide(this._questions, this._answers);
     this.violations = violations;
     this.status = violations.length === 0 ? "ok" : "rejected";
     this.accessChanged = this.accessKey() !== before;
@@ -85,8 +141,14 @@ export class Dashboard {
     return JSON.stringify([[...this._entities].sort(), [...this._templates.keys()].sort(), [...this._mediaSources].sort()]);
   }
 
+  /** Denies access until the next successful load, e.g. while switching HA connections. */
+  markLoading(): void {
+    this.status = "loading";
+  }
+
   /** Loads config from HA, extracts and validates, then resolves device ids. */
-  async load(client: HaClient): Promise<void> {
+  async load(client: HaClient, { quiet = false } = {}): Promise<void> {
+    this.quiet = quiet;
     let config: unknown;
     try {
       config = await client.sendCommand({ type: "lovelace/config", url_path: this.urlPath });
@@ -101,6 +163,16 @@ export class Dashboard {
         ]);
         return;
       }
+      if (err instanceof HaCommandError && err.code === "unauthorized") {
+        this.reject([
+          {
+            rule: "admin-only",
+            path: "$",
+            message: "Dashboard is visible to administrators only; the proxy's non-admin user cannot read it",
+          },
+        ]);
+        return;
+      }
       throw err;
     }
 
@@ -109,7 +181,7 @@ export class Dashboard {
       return;
     }
 
-    this.applyConfig(config);
+    this.applyConfig(config, await groupablePlayers(client));
     if (this.status === "ok") {
       await this.refreshDevices(client);
     }
@@ -139,6 +211,8 @@ export class Dashboard {
     this._devices = new Set();
     this._templates = new Map();
     this._mediaSources = new Set();
+    this._questions = [];
+    this._decisions = decide([], {});
     this.violations = violations;
     this.status = "rejected";
     this.log();
@@ -150,15 +224,32 @@ export class Dashboard {
   }
 
   private log(): void {
+    if (this.quiet) return;
     if (this.status === "ok") {
+      const pending = this.pending.length;
       console.log(
-        `Dashboard "${this.id}": ${this._entities.size} entities, ${this._templates.size} template(s), ${this._devices.size} device(s)`,
+        `Dashboard "${this.id}": ${this._entities.size} entities, ${this._templates.size} template(s), ${this._devices.size} device(s)` +
+          (pending ? `, ${pending} question(s) for the admin` : ""),
       );
       return;
     }
-    console.error(`Dashboard "${this.id}" REJECTED, its users cannot log in:`);
+    console.error(`Dashboard "${this.id}" REJECTED, its guests cannot log in:`);
     for (const v of this.violations) {
       console.error(`  [${v.rule}] ${v.path}: ${v.message}`);
     }
   }
+}
+
+/** Media players that can be grouped; only those raise a grouping question. */
+async function groupablePlayers(client: HaClient): Promise<string[]> {
+  const states = (await client.sendCommand({ type: "get_states" })) as StateLike[];
+  if (!Array.isArray(states)) return [];
+  return states
+    .filter(
+      (s) =>
+        typeof s.entity_id === "string" &&
+        s.entity_id.startsWith("media_player.") &&
+        ((s.attributes?.supported_features ?? 0) & MEDIA_PLAYER_GROUPING) !== 0,
+    )
+    .map((s) => s.entity_id as string);
 }

@@ -3,11 +3,28 @@
  * answers the commands the proxy relies on and records service calls.
  */
 import type { ServerWebSocket } from "bun";
-import type { HAConfig } from "../src/config";
+import type { HaEndpoint } from "../src/ha/endpoint";
 
 type Obj = Record<string, unknown>;
 
+/** Long-lived token of the pre-existing non-admin proxy user. */
 export const MOCK_TOKEN = "valid-token";
+/** Access token of an HA administrator (what OAuth hands out for "admin"). */
+export const ADMIN_TOKEN = "admin-token";
+/** Access token of a regular HA user. */
+export const USER_TOKEN = "user-token";
+
+export interface MockUser {
+  id: string;
+  name: string;
+  username: string | null;
+  password?: string;
+  is_owner: boolean;
+  is_admin: boolean;
+  system_generated: boolean;
+  local_only: boolean;
+  group_ids: string[];
+}
 
 export const STATES = [
   { entity_id: "light.kitchen", state: "on", attributes: { friendly_name: "Kitchen" }, last_changed: "", last_updated: "", context: {} },
@@ -16,6 +33,9 @@ export const STATES = [
   { entity_id: "camera.garden", state: "idle", attributes: {}, last_changed: "", last_updated: "", context: {} },
   { entity_id: "camera.bedroom", state: "idle", attributes: {}, last_changed: "", last_updated: "", context: {} },
   { entity_id: "person.owner", state: "home", attributes: { latitude: 1, longitude: 2 }, last_changed: "", last_updated: "", context: {} },
+  { entity_id: "media_player.living", state: "idle", attributes: { supported_features: 524288 | 1 }, last_changed: "", last_updated: "", context: {} },
+  { entity_id: "media_player.kitchen", state: "idle", attributes: { supported_features: 524288 }, last_changed: "", last_updated: "", context: {} },
+  { entity_id: "media_player.tv", state: "off", attributes: { supported_features: 1 }, last_changed: "", last_updated: "", context: {} },
 ];
 
 export const REGISTRY = [
@@ -60,9 +80,33 @@ export const AUTO_ENTITIES_DASHBOARD: Obj = {
 
 export const STRATEGY_DASHBOARD: Obj = { strategy: { type: "original-states" } };
 
+/** Links and a groupable media player: raises questions for the admin. */
+export const LINKS_DASHBOARD: Obj = {
+  views: [
+    {
+      path: "main",
+      cards: [
+        { type: "tile", entity: "light.kitchen", tap_action: { action: "navigate", navigation_path: "/links-dash/sub" } },
+        { type: "button", entity: "light.kitchen", tap_action: { action: "url", url_path: "https://example.com/wifi" } },
+        { type: "button", entity: "light.kitchen", hold_action: { action: "navigate", navigation_path: "/config/dashboard" } },
+        { type: "media-control", entity: "media_player.living" },
+        { type: "media-control", entity: "media_player.kitchen" },
+        { type: "media-control", entity: "media_player.tv" },
+      ],
+    },
+    { path: "sub", subview: true, cards: [{ type: "tile", entity: "light.bedroom" }] },
+  ],
+};
+
 export interface MockHA {
   port: number;
-  haConfig: HAConfig;
+  url: string;
+  /** Endpoint of the pre-existing non-admin proxy user. */
+  endpoint: HaEndpoint;
+  users: MockUser[];
+  /** Simulates the HA login page: returns an authorization code for this token's user. */
+  issueCode(clientId: string, userToken: string): string;
+  revoked: string[];
   /** recorded call_service commands (WS) */
   serviceCalls: Obj[];
   /** recorded REST service calls */
@@ -75,6 +119,7 @@ export interface MockHA {
 
 interface SockData {
   authed: boolean;
+  user: MockUser | null;
   eventSubs: Map<number, string>;
   /** set by supported_features { coalesce_messages: 1 }: wrap replies in arrays */
   coalesce: boolean;
@@ -87,8 +132,92 @@ export function startMockHA(port = 0): MockHA {
     ["guest-dash", GUEST_DASHBOARD],
     ["bad-dash", AUTO_ENTITIES_DASHBOARD],
     ["strategy-dash", STRATEGY_DASHBOARD],
+    ["links-dash", LINKS_DASHBOARD],
   ]);
   const sockets = new Set<ServerWebSocket<SockData>>();
+  const revoked: string[] = [];
+
+  const users: MockUser[] = [
+    { id: "owner", name: "Owner", username: "owner", is_owner: true, is_admin: true, system_generated: false, local_only: false, group_ids: ["system-admin"] },
+    { id: "proxy", name: "guest-proxy", username: "guest-proxy", is_owner: false, is_admin: false, system_generated: false, local_only: false, group_ids: ["system-users"] },
+    { id: "alice", name: "Alice", username: "alice", is_owner: false, is_admin: false, system_generated: false, local_only: false, group_ids: ["system-users"] },
+  ];
+  /** token → user id */
+  const tokens = new Map<string, string>([
+    [MOCK_TOKEN, "proxy"],
+    [ADMIN_TOKEN, "owner"],
+    [USER_TOKEN, "alice"],
+  ]);
+  /** authorization code → { user, client_id } */
+  const codes = new Map<string, { userId: string; clientId: string }>();
+  const flows = new Map<string, { clientId: string; redirectUri: string }>();
+  let counter = 0;
+  const userFor = (token: unknown) => users.find((u) => u.id === tokens.get(String(token))) ?? null;
+  const mint = (prefix: string, userId: string) => {
+    const token = `${prefix}-${++counter}`;
+    tokens.set(token, userId);
+    return token;
+  };
+  const userInfo = (u: MockUser) => ({
+    id: u.id,
+    username: u.username,
+    name: u.name,
+    is_owner: u.is_owner,
+    is_active: true,
+    local_only: u.local_only,
+    system_generated: u.system_generated,
+    group_ids: u.group_ids,
+    credentials: u.username ? [{ type: "homeassistant" }] : [],
+  });
+
+  async function authRoute(req: Request, url: URL): Promise<Response | null> {
+    if (url.pathname === "/auth/providers") {
+      return Response.json({ providers: [{ name: "Home Assistant Local", id: null, type: "homeassistant" }], preselect_remember_me: false });
+    }
+    if (url.pathname === "/auth/token" && req.method === "POST") {
+      const form = new URLSearchParams(await req.text());
+      const entry = codes.get(form.get("code") ?? "");
+      if (form.get("grant_type") !== "authorization_code" || !entry || entry.clientId !== form.get("client_id")) {
+        return Response.json({ error: "invalid_request", error_description: "Invalid code" }, { status: 400 });
+      }
+      codes.delete(form.get("code")!);
+      return Response.json({
+        access_token: mint("access", entry.userId),
+        refresh_token: mint("refresh", entry.userId),
+        expires_in: 1800,
+        token_type: "Bearer",
+      });
+    }
+    if (url.pathname === "/auth/revoke" && req.method === "POST") {
+      const form = new URLSearchParams(await req.text());
+      const token = form.get("token");
+      if (token) {
+        revoked.push(token);
+        tokens.delete(token);
+      }
+      return new Response(null, { status: 200 });
+    }
+    if (url.pathname === "/auth/login_flow" && req.method === "POST") {
+      const body = (await req.json()) as { client_id: string; redirect_uri: string; handler: unknown[] };
+      if (new URL(body.client_id).host !== new URL(body.redirect_uri).host) return Response.json({ message: "Invalid redirect URI" }, { status: 400 });
+      const flowId = `flow-${++counter}`;
+      flows.set(flowId, { clientId: body.client_id, redirectUri: body.redirect_uri });
+      return Response.json({ type: "form", flow_id: flowId, step_id: "init", data_schema: [], errors: {} });
+    }
+    const flowStep = url.pathname.match(/^\/auth\/login_flow\/(.+)$/);
+    if (flowStep && req.method === "POST") {
+      const flow = flows.get(flowStep[1]!);
+      const body = (await req.json()) as { client_id: string; username: string; password: string };
+      if (!flow || flow.clientId !== body.client_id) return Response.json({ message: "Invalid flow" }, { status: 400 });
+      const user = users.find((u) => u.username === body.username && u.password === body.password);
+      if (!user) return Response.json({ type: "form", flow_id: flowStep[1], errors: { base: "invalid_auth" } });
+      flows.delete(flowStep[1]!);
+      const code = `code-${++counter}`;
+      codes.set(code, { userId: user.id, clientId: body.client_id });
+      return Response.json({ type: "create_entry", result: code });
+    }
+    return null;
+  }
 
   // Like HA, batch replies into one array frame once coalescing is on.
   const deliver = (ws: ServerWebSocket<SockData>, data: string) => ws.send(ws.data.coalesce ? `[${data}]` : data);
@@ -102,8 +231,11 @@ export function startMockHA(port = 0): MockHA {
     fetch(req, server) {
       const url = new URL(req.url);
       if (url.pathname === "/api/websocket") {
-        if (server.upgrade(req, { data: { authed: false, eventSubs: new Map(), coalesce: false } })) return undefined;
+        if (server.upgrade(req, { data: { authed: false, user: null, eventSubs: new Map(), coalesce: false } })) return undefined;
         return new Response("upgrade failed", { status: 400 });
+      }
+      if (url.pathname.startsWith("/auth/")) {
+        return authRoute(req, url).then((r) => r ?? new Response("mock: not found", { status: 404 }));
       }
       if (req.headers.get("authorization") !== `Bearer ${MOCK_TOKEN}`) {
         return new Response("Unauthorized", { status: 401 });
@@ -144,8 +276,10 @@ export function startMockHA(port = 0): MockHA {
       message(ws, raw) {
         const msg = JSON.parse(String(raw)) as Obj;
         if (!ws.data.authed) {
-          if (msg.type === "auth" && msg.access_token === MOCK_TOKEN) {
+          const user = msg.type === "auth" ? userFor(msg.access_token) : null;
+          if (user) {
             ws.data.authed = true;
+            ws.data.user = user;
             deliver(ws, JSON.stringify({ type: "auth_ok", ha_version: "2026.9.0" }));
           } else {
             deliver(ws, JSON.stringify({ type: "auth_invalid", message: "bad token" }));
@@ -154,7 +288,53 @@ export function startMockHA(port = 0): MockHA {
           return;
         }
         const id = msg.id;
+        const me = ws.data.user!;
+        const adminOnly = new Set(["config/auth/list", "config/auth/create", "config/auth/delete", "config/auth_provider/homeassistant/create"]);
+        if (adminOnly.has(String(msg.type)) && !me.is_admin) {
+          deliver(ws, error(id, "unauthorized"));
+          return;
+        }
         switch (msg.type) {
+          case "config/auth/list":
+            deliver(ws, result(id, users.map(userInfo)));
+            return;
+          case "config/auth/create": {
+            const user: MockUser = {
+              id: `user-${++counter}`,
+              name: String(msg.name),
+              username: null,
+              is_owner: false,
+              is_admin: ((msg.group_ids as string[] | undefined) ?? []).includes("system-admin"),
+              system_generated: false,
+              local_only: msg.local_only === true,
+              group_ids: (msg.group_ids as string[] | undefined) ?? [],
+            };
+            users.push(user);
+            deliver(ws, result(id, { user: userInfo(user) }));
+            return;
+          }
+          case "config/auth_provider/homeassistant/create": {
+            const user = users.find((u) => u.id === msg.user_id);
+            if (!user) { deliver(ws, error(id, "not_found")); return; }
+            if (users.some((u) => u.username === msg.username)) { deliver(ws, error(id, "username_exists")); return; }
+            user.username = String(msg.username);
+            user.password = String(msg.password);
+            deliver(ws, result(id, null));
+            return;
+          }
+          case "config/auth/delete": {
+            const index = users.findIndex((u) => u.id === msg.user_id);
+            if (index >= 0) users.splice(index, 1);
+            for (const [token, userId] of tokens) if (userId === msg.user_id) tokens.delete(token);
+            deliver(ws, result(id, null));
+            return;
+          }
+          case "auth/long_lived_access_token":
+            deliver(ws, result(id, mint("llat", me.id)));
+            return;
+          case "frontend/get_themes":
+            deliver(ws, result(id, { themes: { nord: {}, midnight: {} }, default_theme: "default", default_dark_theme: null }));
+            return;
           case "supported_features":
             ws.data.coalesce = (msg.features as Obj | undefined)?.coalesce_messages === 1;
             deliver(ws, result(id, null));
@@ -163,10 +343,16 @@ export function startMockHA(port = 0): MockHA {
             deliver(ws, JSON.stringify({ id, type: "pong" }));
             return;
           case "auth/current_user":
-            deliver(ws, result(id, { id: "proxy", name: "guest-proxy", is_admin: false, is_owner: false }));
+            deliver(ws, result(id, { id: me.id, name: me.name, is_admin: me.is_admin, is_owner: me.is_owner }));
             return;
           case "lovelace/dashboards/list":
-            deliver(ws, result(id, [...dashboards.keys()].map((url_path) => ({ id: url_path, url_path, title: url_path, mode: "storage" }))));
+            deliver(
+              ws,
+              result(
+                id,
+                [...dashboards.keys()].filter((k) => k !== "lovelace").map((url_path) => ({ id: url_path, url_path, title: `Title ${url_path}`, mode: "storage", require_admin: false })),
+              ),
+            );
             return;
           case "lovelace/config": {
             const key = (msg.url_path as string | null) ?? "lovelace";
@@ -235,9 +421,20 @@ export function startMockHA(port = 0): MockHA {
     },
   });
 
+  const url = `http://localhost:${server.port}`;
   return {
     port: server.port!,
-    haConfig: { host: "localhost", port: server.port!, tls: false, long_lived_access_token: MOCK_TOKEN },
+    url,
+    endpoint: { url, token: MOCK_TOKEN },
+    users,
+    revoked,
+    issueCode(clientId, userToken) {
+      const userId = tokens.get(userToken);
+      if (!userId) throw new Error("unknown token");
+      const code = `code-${++counter}`;
+      codes.set(code, { userId, clientId });
+      return code;
+    },
     serviceCalls,
     restServiceCalls,
     dashboards,

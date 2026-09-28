@@ -115,14 +115,19 @@ describe("call_service", () => {
           ],
         },
       ],
-    });
+    }, ["media_player.living", "media_player.kitchen"]);
     const call = (service: string, entity: string, service_data: Record<string, unknown>) =>
       evaluate(
         { id: 1, type: "call_service", domain: entity.split(".")[0], service, target: { entity_id: entity }, service_data },
         { dashboard: d, subscriptions: new Map() },
       ).kind;
 
+    // Grouping needs the admin's consent; until then the restrictive choice applies.
+    expect(call("join", "media_player.living", { group_members: ["media_player.kitchen"] })).toBe("reject");
+    expect(call("unjoin", "media_player.living", {})).toBe("reject");
+    d.setAnswers({ "media_group:media_player.living": "dashboard" });
     expect(call("join", "media_player.living", { group_members: ["media_player.kitchen"] })).toBe("forward");
+    expect(call("unjoin", "media_player.living", {})).toBe("forward");
     expect(call("join", "media_player.living", { group_members: ["media_player.bedroom"] })).toBe("reject");
     expect(call("join", "media_player.living", { group_members: ["media_player.kitchen", "media_player.bedroom"] })).toBe("reject");
     expect(call("join", "media_player.living", { group_members: "all" })).toBe("reject");

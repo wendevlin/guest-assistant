@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { GuestTheme } from "./config";
+import type { GuestTheme } from "./theme";
 
 /**
  * Signing secret is generated per process. Tokens are short-lived and the
@@ -18,7 +18,7 @@ export interface GuestTokenPayload {
   sid: string;
   /** dashboard id the user is bound to */
   dashboard: string;
-  /** theme settings from config.yaml, answered to the frontend by the WS proxy */
+  /** theme settings set by the admin, answered to the frontend by the WS proxy */
   theme: GuestTheme;
   exp: number;
 }

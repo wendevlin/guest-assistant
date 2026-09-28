@@ -1,7 +1,5 @@
-import type { GuestTheme } from "../config";
 import { JWT_TTL_SECONDS, signJWT } from "../jwt";
-import type { Dashboard } from "../dashboard";
-import type { Auth } from "./index";
+import type { Runtime } from "../runtime";
 
 /**
  * GET /api/auth/hass-token
@@ -9,19 +7,15 @@ import type { Auth } from "./index";
  * Exchanges a valid better-auth session for a short-lived JWT the guest
  * frontend presents in the HA-compatible WebSocket auth handshake.
  */
-export function createHassTokenHandler(
-  auth: Auth,
-  dashboards: Map<string, Dashboard>,
-  themeFor: (username: string) => GuestTheme,
-) {
+export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboards" | "themeFor">) {
   return async (request: Request): Promise<Response> => {
-    const session = await auth.api.getSession({ headers: request.headers });
+    const session = await runtime.auth.api.getSession({ headers: request.headers });
     if (!session) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const dashboardId = (session.user as { dashboard?: string }).dashboard;
-    const dashboard = dashboardId ? dashboards.get(dashboardId) : undefined;
+    const dashboard = dashboardId ? runtime.dashboards.get(dashboardId) : undefined;
     if (!dashboard) {
       return Response.json({ error: "No dashboard assigned" }, { status: 403 });
     }
@@ -35,7 +29,7 @@ export function createHassTokenHandler(
       );
     }
 
-    const theme = themeFor((session.user as { username?: string }).username ?? "");
+    const theme = runtime.themeFor(dashboard.id, (session.user as { theme?: string | null }).theme);
     const token = signJWT({
       sub: session.user.id,
       sid: session.session.id,

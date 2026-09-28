@@ -10,7 +10,7 @@
  * and the respective component websocket_api modules.
  */
 
-import type { GuestTheme } from "../config";
+import type { GuestTheme } from "../theme";
 import type { Dashboard } from "../dashboard";
 import { entityDomain, isEntityId } from "../dashboard";
 import * as F from "./ws-filters";
@@ -24,7 +24,7 @@ export interface TrackedCommand {
 
 export interface CommandContext {
   dashboard: Dashboard;
-  /** theme settings of the guest (from config.yaml) */
+  /** theme settings of the guest (set by the admin) */
   theme?: GuestTheme;
   /** subscriptions established on this connection (id → command) */
   subscriptions: ReadonlyMap<number, TrackedCommand>;
@@ -197,12 +197,15 @@ const TARGET_SELECTOR_KEYS = ["entity_id", "device_id", "area_id", "label_id", "
  * otherwise let a guest act on things outside the allowlist through an
  * allowed entity. Each check returns an error message or null.
  */
-const SERVICE_DATA_CHECKS: Record<string, (data: Obj, ctx: CommandContext) => string | null> = {
-  "media_player.join": (data, ctx) => {
+const SERVICE_DATA_CHECKS: Record<string, (data: Obj, ctx: CommandContext, ids: string[]) => string | null> = {
+  "media_player.join": (data, ctx, ids) => {
+    if (!ids.every((id) => ctx.dashboard.mediaGroupAllowed(id))) return "grouping not allowed for this player";
     const members = allowedIds(data.group_members, A(ctx));
     if (!members || !members.every((id) => entityDomain(id) === "media_player")) return "group_members not allowed";
     return null;
   },
+  "media_player.unjoin": (_data, ctx, ids) =>
+    ids.every((id) => ctx.dashboard.mediaGroupAllowed(id)) ? null : "grouping not allowed for this player",
   "media_player.play_media": (data, ctx) => {
     // media-source ids can address other entities (media-source://camera/…)
     // and local media; only ids written into the dashboard are allowed.
@@ -272,7 +275,7 @@ export function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
     if (!allowed || !allowed.includes(service)) return reject("service not allowed");
     if (!ids.every((id) => entityDomain(id) === domain)) return reject("target domain mismatch");
     const check = SERVICE_DATA_CHECKS[`${domain}.${service}`];
-    const error = check?.(serviceData ?? {}, ctx);
+    const error = check?.(serviceData ?? {}, ctx, ids);
     if (error) return reject(error);
   }
 
@@ -414,7 +417,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "frontend/get_icons": { fields: ["category", "integration"] },
   // User data belongs to the HA user behind the proxy token, so it is never
   // read from or written to HA. "language" is answered as unset (guests pick
-  // it on their device), "theme" comes from config.yaml, and saving either is
+  // it on their device), "theme" comes from the admin settings, and saving either is
   // acknowledged without effect: the frontend keeps the choice locally.
   "frontend/get_user_data": {
     fields: ["key"],
@@ -443,6 +446,8 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "lovelace/config": {
     fields: ["url_path", "force"],
     validate: (msg, ctx) => forward({ id: msg.id, type: "lovelace/config", url_path: ctx.dashboard.urlPath, force: msg.force === true }),
+    // Links the admin has not allowed are removed (see dashboard/interactions.ts).
+    filterResult: (r, ctx) => ctx.dashboard.guestConfig(r),
   },
   "lovelace/dashboards/list": {
     fields: [],

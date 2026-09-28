@@ -1,7 +1,7 @@
 import type { BunRequest } from "bun";
 import { isDenied, type RequireGuest } from "../auth/guard";
-import { haHttpUrl, type Config } from "../config";
 import type { Dashboard } from "../dashboard";
+import type { HaEndpoint } from "../ha/endpoint";
 import { filterLogbookEntries } from "./ws-filters";
 
 /**
@@ -16,19 +16,18 @@ const STRIPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "set-co
 
 type Handler = (req: BunRequest) => Promise<Response> | Response;
 
-export function createHttpRoutes(config: Config, requireGuest: RequireGuest) {
-  const ha = config["home-assistant"];
-  const base = haHttpUrl(ha);
-
+export function createHttpRoutes(endpoint: () => HaEndpoint | null, requireGuest: RequireGuest) {
   async function proxy(request: Request, init?: { method?: string }): Promise<Response> {
+    const ha = endpoint();
+    if (!ha) return new Response("Service Unavailable", { status: 503 });
     const url = new URL(request.url);
     const headers = new Headers();
     request.headers.forEach((value, key) => {
       if (!HOP_BY_HOP_REQUEST_HEADERS.includes(key.toLowerCase())) headers.set(key, value);
     });
-    headers.set("authorization", `Bearer ${ha.long_lived_access_token}`);
+    headers.set("authorization", `Bearer ${ha.token}`);
 
-    const upstream = await fetch(`${base}${url.pathname}${url.search}`, {
+    const upstream = await fetch(`${ha.url}${url.pathname}${url.search}`, {
       method: init?.method ?? "GET",
       headers,
       redirect: "manual",

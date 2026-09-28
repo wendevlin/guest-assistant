@@ -1,17 +1,15 @@
-import { createAuth, type Auth } from "../src/auth";
-import type { Config } from "../src/config";
-import { Dashboard } from "../src/dashboard";
-import { HaClient } from "../src/ha/client";
-import { migrate } from "../src/initialize/migrate";
-import { syncUsers } from "../src/initialize/sync-users";
+import { AdminSessions } from "../src/admin/sessions";
+import type { Dashboard } from "../src/dashboard";
+import type { Env } from "../src/env";
+import { Runtime, type Mode } from "../src/runtime";
 import { createServer } from "../src/server";
+import { Store } from "../src/store";
 import { startMockHA, type MockHA } from "./mock-ha";
 
 export interface TestEnv {
   ha: MockHA;
-  client: HaClient;
-  auth: Auth;
-  config: Config;
+  runtime: Runtime;
+  sessions: AdminSessions;
   dashboards: Map<string, Dashboard>;
   url: string;
   wsUrl: string;
@@ -27,48 +25,55 @@ export const USERS = [
   { username: "badguest", password: "bad-pass-123", dashboard: "bad-dash" },
 ];
 
-export async function startTestEnv(): Promise<TestEnv> {
-  const ha = startMockHA();
-  const client = new HaClient(ha.haConfig);
-  await client.connect();
+export function testEnvConfig(port: number): Env {
+  return {
+    port,
+    dataDir: ":memory:",
+    frontendRepo: "./test/fixtures/frontend-repo",
+    ingressPort: port + 1,
+    legacyConfigPath: "/nonexistent/config.yaml",
+  };
+}
 
-  const dashboards = new Map<string, Dashboard>();
-  for (const id of ["guest-dash", "bad-dash", "strategy-dash"]) {
-    const d = new Dashboard(id);
-    await d.load(client);
-    dashboards.set(id, d);
+export function randomPort(): number {
+  return 30000 + Math.floor(Math.random() * 20000);
+}
+
+/**
+ * Starts mock HA and the proxy. With `configured` (default) the proxy is
+ * already connected with the mock's non-admin token and has the test
+ * dashboards and guests; otherwise it starts like a fresh installation.
+ */
+export async function startTestEnv({ configured = true, mode = "standalone" as Mode } = {}): Promise<TestEnv> {
+  const ha = startMockHA();
+  const port = randomPort();
+  const store = Store.memory();
+  const runtime = new Runtime(testEnvConfig(port), store, mode);
+  await runtime.init();
+
+  if (configured) {
+    store.set("ha", { url: ha.url, token: ha.endpoint.token });
+    store.saveDashboard({ id: "guest-dash", theme: { name: "nord", mode: "dark", guest_can_change_mode: true }, answers: {} });
+    store.saveDashboard({ id: "bad-dash", theme: {}, answers: {} });
+    store.saveDashboard({ id: "strategy-dash", theme: {}, answers: {} });
+    for (const u of USERS) await runtime.guests.create(u);
+    await runtime.connect();
   }
 
-  const port = 30000 + Math.floor(Math.random() * 20000);
-  const config: Config = {
-    "home-assistant": ha.haConfig,
-    base_url: `http://localhost:${port}`,
-    port,
-    // Only read for theme settings here; users are synced from USERS below.
-    dashboards: [
-      { id: "guest-dash", theme: { name: "nord", mode: "dark", guest_can_change_mode: true }, users: [{ username: "guest", password: "unused-here" }] },
-    ],
-    frontend_development_repo: "./test/fixtures/frontend-repo",
-  };
-
-  const auth = createAuth(config, ":memory:");
-  await migrate(auth);
-  await syncUsers(auth, USERS);
-
-  const { server } = createServer({ config, dashboards, auth, client });
+  const sessions = new AdminSessions();
+  const { server } = createServer(runtime, sessions, port);
   const url = `http://localhost:${server.port}`;
 
   return {
     ha,
-    client,
-    auth,
-    config,
-    dashboards,
+    runtime,
+    sessions,
+    dashboards: runtime.dashboards,
     url,
     wsUrl: `ws://localhost:${server.port}/api/websocket`,
     stop() {
       server.stop(true);
-      client.close();
+      runtime.close();
       ha.stop();
     },
     async login(username, password) {

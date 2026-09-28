@@ -1,4 +1,4 @@
-import { haWsUrl, type HAConfig } from "../config";
+import { haWsUrl, type HaEndpoint } from "./endpoint";
 
 interface WSMessage {
   type: string;
@@ -56,7 +56,18 @@ export class HaClient {
   private authenticated = false;
   haVersion: string | undefined;
 
-  constructor(private readonly ha: HAConfig) {}
+  constructor(private readonly ha: HaEndpoint) {}
+
+  /** Connects, runs `fn` and closes again. Used for one-off admin operations. */
+  static async with<T>(endpoint: HaEndpoint, fn: (client: HaClient) => Promise<T>): Promise<T> {
+    const client = new HaClient(endpoint);
+    try {
+      await client.connect();
+      return await fn(client);
+    } finally {
+      client.close();
+    }
+  }
 
   /** Resolves once authenticated. Rejects only on the first connection attempt. */
   connect(): Promise<void> {
@@ -79,6 +90,7 @@ export class HaClient {
 
   close(): void {
     this.closed = true;
+    this.authenticated = false;
     this.ws?.close();
   }
 
@@ -132,7 +144,13 @@ export class HaClient {
 
   private open(onFirstOk?: () => void, onFirstFail?: (err: Error) => void): void {
     if (this.closed) return;
-    const ws = new WebSocket(haWsUrl(this.ha));
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(haWsUrl(this.ha));
+    } catch (err) {
+      onFirstFail?.(new HaCommandError("connect_failed", `Invalid Home Assistant URL ${this.ha.url}: ${String(err)}`));
+      return;
+    }
     this.ws = ws;
     let authenticated = false;
     const isFirst = onFirstOk !== undefined;
@@ -146,7 +164,7 @@ export class HaClient {
       }
 
       if (msg.type === "auth_required") {
-        ws.send(JSON.stringify({ type: "auth", access_token: this.ha.long_lived_access_token }));
+        ws.send(JSON.stringify({ type: "auth", access_token: this.ha.token }));
         return;
       }
       if (msg.type === "auth_ok") {
@@ -205,7 +223,7 @@ export class HaClient {
       this.pending.clear();
       if (isFirst && !authenticated) {
         onFirstFail?.(
-          new HaCommandError("connect_failed", `Failed to connect to Home Assistant at ${this.ha.host}:${this.ha.port}`),
+          new HaCommandError("connect_failed", `Failed to connect to Home Assistant at ${this.ha.url}`),
         );
         return;
       }

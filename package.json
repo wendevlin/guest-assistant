@@ -1,9 +1,9 @@
 {
   "name": "guest-assistant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "A guest-facing Home Assistant proxy with its own auth, dashboard restriction, and default-deny entity filtering",
+  "description": "A guest-facing Home Assistant proxy with its own auth, an admin UI, dashboard restriction and default-deny entity filtering",
   "engines": {
     "bun": ">=1.4"
   },
@@ -11,14 +11,17 @@
     "dev": "bun --watch run src/index.ts",
     "start": "bun run src/index.ts",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit && bunx tsc --noEmit -p src/admin/ui"
   },
   "dependencies": {
     "better-auth": "^1.7.5",
+    "lit": "3",
+    "multicast-dns": "7",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
+    "@types/multicast-dns": "^7.2.4",
     "typescript": "^5.9.0"
   }
 }

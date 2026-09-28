@@ -1,4 +1,5 @@
 import { hasTemplate, isEntityId, isObj, type Obj } from "./extract";
+import { ACTION_KEYS } from "./interactions";
 
 export interface Violation {
   rule: string;
@@ -7,7 +8,6 @@ export interface Violation {
   message: string;
 }
 
-const ACTION_KEYS = new Set(["tap_action", "hold_action", "double_tap_action", "icon_tap_action", "icon_hold_action", "icon_double_tap_action"]);
 const NON_ENTITY_TARGET_KEYS = ["area_id", "device_id", "label_id", "floor_id"];
 /** Card types that pick entities at runtime instead of listing them. */
 const DYNAMIC_CARD_TYPES = new Set(["area", "iframe"]);
@@ -89,10 +89,7 @@ function hasExplicitEntities(card: Obj): boolean {
 
 function checkAction(action: Obj, path: string, out: Violation[]): void {
   const kind = action.action;
-  if (kind === "navigate" || kind === "url") {
-    out.push(v("navigation", path, `Action "${kind}" is not allowed on guest dashboards`));
-    return;
-  }
+  // navigate and url actions are questions for the admin (see interactions.ts).
   if (kind !== "call-service" && kind !== "perform-action") return;
 
   let hasEntityTarget = false;

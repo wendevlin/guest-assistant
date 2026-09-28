@@ -158,7 +158,7 @@ describe("WebSocket proxy", () => {
     await ws.closed;
   });
 
-  test("theme settings from config.yaml reach the frontend, HA's own are never read", async () => {
+  test("theme settings from the admin reach the frontend, HA's own are never read", async () => {
     const ws = await connect();
     const res = await ws.send({ type: "frontend/subscribe_user_data", key: "theme" });
     expect(res.success).toBe(true);
@@ -285,16 +285,15 @@ describe("WebSocket proxy", () => {
     const dashboard = env.dashboards.get("guest-dash")!;
     const { GUEST_DASHBOARD } = await import("./mock-ha");
     env.ha.dashboards.set("guest-dash", { ...GUEST_DASHBOARD, title: "Renamed" });
-    // HA's own event is dropped ...
+    // HA's own event is dropped; the proxy re-analyses the dashboard ...
     env.ha.emitEvent("lovelace_updated", { url_path: "guest-dash", mode: "storage" });
-    await dashboard.load(env.client);
-    expect(dashboard.accessChanged).toBe(false);
-    // ... and exactly one event from the proxy arrives after the re-analysis
+    // ... and exactly one event from the proxy arrives afterwards
     const events = await ws.events(sub.id as number, 2, 300);
+    expect(dashboard.accessChanged).toBe(false);
     expect(events).toHaveLength(1);
     expect((events[0]!.event as { data: { url_path: string } }).data.url_path).toBe("guest-dash");
     env.ha.dashboards.set("guest-dash", GUEST_DASHBOARD);
-    await dashboard.load(env.client);
+    await dashboard.load(env.runtime.client!);
     ws.close();
   });
 
@@ -304,7 +303,7 @@ describe("WebSocket proxy", () => {
     const { GUEST_DASHBOARD } = await import("./mock-ha");
     const views = GUEST_DASHBOARD.views as Array<{ cards: unknown[] }>;
     env.ha.dashboards.set("guest-dash", { views: [{ cards: [...views[0]!.cards, { type: "tile", entity: "light.bedroom" }] }] });
-    await dashboard.load(env.client);
+    await dashboard.load(env.runtime.client!);
     expect(dashboard.status).toBe("ok");
     expect(dashboard.accessChanged).toBe(true);
     await ws.closed;
@@ -317,14 +316,14 @@ describe("WebSocket proxy", () => {
     again.close();
 
     env.ha.dashboards.set("guest-dash", GUEST_DASHBOARD);
-    await dashboard.load(env.client);
+    await dashboard.load(env.runtime.client!);
   });
 
   test("a dashboard that becomes invalid drops its connections", async () => {
     const ws = await connect();
     const dashboard = env.dashboards.get("guest-dash")!;
     env.ha.dashboards.set("guest-dash", { views: [{ cards: [{ type: "custom:auto-entities" }] }] });
-    await dashboard.load(env.client);
+    await dashboard.load(env.runtime.client!);
     expect(dashboard.status).toBe("rejected");
     await ws.closed;
     expect((await env.hassToken(cookie)).status).toBe(403);
@@ -332,7 +331,7 @@ describe("WebSocket proxy", () => {
     // restore
     const { GUEST_DASHBOARD } = await import("./mock-ha");
     env.ha.dashboards.set("guest-dash", GUEST_DASHBOARD);
-    await dashboard.load(env.client);
+    await dashboard.load(env.runtime.client!);
     expect(dashboard.status).toBe("ok");
   });
 });

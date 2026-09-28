@@ -94,7 +94,8 @@ describe("validate", () => {
         },
       ],
     }).map((x) => x.rule);
-    expect(rules).toEqual(["non-entity-target", "no-entity-target", "no-entity-target", "navigation", "non-entity-target", "no-entity-target"]);
+    // navigate actions are questions for the admin, not violations (see interactions.test.ts)
+    expect(rules).toEqual(["non-entity-target", "no-entity-target", "no-entity-target", "non-entity-target", "no-entity-target"]);
   });
 
   test("rejects templates outside markdown content", () => {
