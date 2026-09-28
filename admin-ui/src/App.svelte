@@ -8,7 +8,8 @@
   import * as Tabs from "$lib/components/ui/tabs";
   import { api, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
-  import { t, type Key } from "$lib/i18n";
+  import * as Select from "$lib/components/ui/select";
+  import { language, LANGUAGES, setLanguage, t, type Key, type Language } from "$lib/i18n";
   import Spinner from "$lib/widgets/Spinner.svelte";
   import Connect from "./views/Connect.svelte";
   import Dashboards from "./views/Dashboards.svelte";
@@ -81,6 +82,16 @@
           {t(`conn.${connection}` as Key)}
         </Badge>
       {/if}
+      <Select.Root type="single" value={language} onValueChange={(v) => v !== language && setLanguage(v as Language)}>
+        <Select.Trigger size="sm" aria-label={t("language")} class="w-auto">
+          {LANGUAGES.find((l) => l.code === language)?.name}
+        </Select.Trigger>
+        <Select.Content>
+          {#each LANGUAGES as l (l.code)}
+            <Select.Item value={l.code} label={l.name} />
+          {/each}
+        </Select.Content>
+      </Select.Root>
       {#if signedIn && info}
         <div class="flex items-center gap-1">
           <span class="text-sm text-muted-foreground">{t("signed_in_as", { name: info.admin_name ?? "" })}</span>

@@ -123,6 +123,7 @@ const en = {
   "confirm": "Confirm",
   "dash.collapse": "Collapse",
   "dash.expand": "Show details",
+  language: "Language",
 };
 
 export type Key = keyof typeof en;
@@ -251,11 +252,41 @@ const de: Partial<Record<Key, string>> = {
   confirm: "Bestätigen",
   "dash.collapse": "Einklappen",
   "dash.expand": "Details anzeigen",
+  language: "Sprache",
 };
 
-const language = (navigator.languages ?? [navigator.language]).map((l) => l.toLowerCase().split("-")[0]).find((l) => l === "de" || l === "en") ?? "en";
+export const LANGUAGES = [
+  { code: "en", name: "English" },
+  { code: "de", name: "Deutsch" },
+] as const;
+export type Language = (typeof LANGUAGES)[number]["code"];
+
+const STORAGE_KEY = "guest-assistant-admin-language";
+
+/** English unless the admin picked another language on this device. */
+function storedLanguage(): Language {
+  try {
+    const value = localStorage.getItem(STORAGE_KEY);
+    if (LANGUAGES.some((l) => l.code === value)) return value as Language;
+  } catch {
+    // storage unavailable (private mode, blocked site data)
+  }
+  return "en";
+}
+
+export const language: Language = storedLanguage();
 const dictionary: Record<string, string> = language === "de" ? { ...en, ...de } : en;
 document.documentElement.lang = language;
+
+/** Stores the choice and reloads, so every text is rendered in the new language. */
+export function setLanguage(code: Language): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, code);
+  } catch {
+    // the choice then only lasts until the reload
+  }
+  location.reload();
+}
 
 export function t(key: Key, params: Record<string, string | number> = {}): string {
   return (dictionary[key] ?? key).replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`));
