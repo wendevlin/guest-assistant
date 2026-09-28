@@ -25,6 +25,7 @@ describe("auth surface", () => {
     const t = await env.hassToken(cookie);
     expect(t.status).toBe(200);
     expect(t.body.dashboard_url_path).toBe("guest-dash");
+    expect(t.body.theme_mode_selectable).toBe(true);
     expect(typeof t.body.access_token).toBe("string");
   });
 
@@ -126,6 +127,12 @@ describe("HTTP proxy", () => {
     expect(entries.every((e) => !("context_user_id" in e))).toBe(true);
   });
 
+  test("status endpoint reports the proxy's connection to HA", async () => {
+    const res = await fetch(`${env.url}/api/guest-assistant/status`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ home_assistant: "connected" });
+  });
+
   test("public assets pass through without auth, frontend is served", async () => {
     expect(await (await fetch(`${env.url}/static/icons/x.png`)).text()).toBe("static-asset");
     const index = await fetch(`${env.url}/some/spa/route`, { headers: { accept: "text/html" } });
@@ -149,6 +156,14 @@ describe("WebSocket proxy", () => {
     const res = await ws.auth("nonsense");
     expect(res.type).toBe("auth_invalid");
     await ws.closed;
+  });
+
+  test("theme settings from config.yaml reach the frontend, HA's own are never read", async () => {
+    const ws = await connect();
+    const res = await ws.send({ type: "frontend/subscribe_user_data", key: "theme" });
+    expect(res.success).toBe(true);
+    const [event] = await ws.events(res.id as number);
+    expect(event!.event).toEqual({ value: { theme: "nord", dark: true } });
   });
 
   test("get_states, registries, config and panels are filtered", async () => {
@@ -215,6 +230,13 @@ describe("WebSocket proxy", () => {
     const ok = await ws.send({ type: "call_service", domain: "light", service: "turn_off", target: { entity_id: "light.kitchen" } });
     expect(ok.success).toBe(true);
     expect(env.ha.serviceCalls.at(-1)).toMatchObject({ domain: "light", service: "turn_off", target: { entity_id: ["light.kitchen"] } });
+
+    // the HA frontend's toggle sends the entity in service_data
+    const toggle = await ws.send({ type: "call_service", domain: "light", service: "toggle", service_data: { entity_id: "light.kitchen" } });
+    expect(toggle.success).toBe(true);
+    const forwarded = env.ha.serviceCalls.at(-1)!;
+    expect(forwarded).toMatchObject({ domain: "light", service: "toggle", target: { entity_id: ["light.kitchen"] } });
+    expect(forwarded.service_data).toBeUndefined();
     ws.close();
   });
 
@@ -254,6 +276,48 @@ describe("WebSocket proxy", () => {
     const res = await ws.send({ type: "history/history_during_period", entity_ids: ["light.kitchen"], start_time: "2026-01-01T00:00:00Z" });
     expect(Object.keys(res.result as object)).toEqual(["light.kitchen"]);
     ws.close();
+  });
+
+  test("a dashboard edit that keeps the allowlist is announced with lovelace_updated", async () => {
+    const ws = await connect();
+    const sub = await ws.send({ type: "subscribe_events", event_type: "lovelace_updated" });
+    expect(sub.success).toBe(true);
+    const dashboard = env.dashboards.get("guest-dash")!;
+    const { GUEST_DASHBOARD } = await import("./mock-ha");
+    env.ha.dashboards.set("guest-dash", { ...GUEST_DASHBOARD, title: "Renamed" });
+    // HA's own event is dropped ...
+    env.ha.emitEvent("lovelace_updated", { url_path: "guest-dash", mode: "storage" });
+    await dashboard.load(env.client);
+    expect(dashboard.accessChanged).toBe(false);
+    // ... and exactly one event from the proxy arrives after the re-analysis
+    const events = await ws.events(sub.id as number, 2, 300);
+    expect(events).toHaveLength(1);
+    expect((events[0]!.event as { data: { url_path: string } }).data.url_path).toBe("guest-dash");
+    env.ha.dashboards.set("guest-dash", GUEST_DASHBOARD);
+    await dashboard.load(env.client);
+    ws.close();
+  });
+
+  test("a dashboard edit that changes the allowlist makes guests reconnect", async () => {
+    const ws = await connect();
+    const dashboard = env.dashboards.get("guest-dash")!;
+    const { GUEST_DASHBOARD } = await import("./mock-ha");
+    const views = GUEST_DASHBOARD.views as Array<{ cards: unknown[] }>;
+    env.ha.dashboards.set("guest-dash", { views: [{ cards: [...views[0]!.cards, { type: "tile", entity: "light.bedroom" }] }] });
+    await dashboard.load(env.client);
+    expect(dashboard.status).toBe("ok");
+    expect(dashboard.accessChanged).toBe(true);
+    await ws.closed;
+
+    // after reconnecting, the new entity is part of the initial states
+    const again = await connect();
+    const sub = await again.send({ type: "subscribe_entities" });
+    const [init] = await again.events(sub.id as number);
+    expect(Object.keys((init!.event as { a: object }).a)).toContain("light.bedroom");
+    again.close();
+
+    env.ha.dashboards.set("guest-dash", GUEST_DASHBOARD);
+    await dashboard.load(env.client);
   });
 
   test("a dashboard that becomes invalid drops its connections", async () => {

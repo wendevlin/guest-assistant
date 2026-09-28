@@ -1,5 +1,5 @@
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
-import { haWsUrl, type Config } from "../config";
+import { haWsUrl, type Config, type GuestTheme } from "../config";
 import type { Dashboard } from "../dashboard";
 import { verifyJWT } from "../jwt";
 import { COMMANDS, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand } from "./ws-commands";
@@ -10,6 +10,7 @@ export interface ConnState {
   phase: Phase;
   userId: string | null;
   dashboard: Dashboard | null;
+  theme: GuestTheme | null;
   haWs: WebSocket | null;
   /** commands sent upstream that await their result */
   pending: Map<number, TrackedCommand>;
@@ -72,6 +73,7 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
 
     ws.data.userId = payload.sub;
     ws.data.dashboard = dashboard;
+    ws.data.theme = payload.theme;
     ws.data.phase = "connecting_ha";
     register(ws);
 
@@ -140,7 +142,7 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
       return;
     }
 
-    const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
+    const ctx: CommandContext = { dashboard, theme: ws.data.theme ?? undefined, subscriptions: ws.data.subscriptions };
     const verdict = evaluate(msg, ctx);
 
     switch (verdict.kind) {
@@ -168,7 +170,7 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
 
   function handleUpstreamMessage(ws: GuestSocket, msg: Obj): void {
     const dashboard = ws.data.dashboard!;
-    const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
+    const ctx: CommandContext = { dashboard, theme: ws.data.theme ?? undefined, subscriptions: ws.data.subscriptions };
     const id = msg.id;
 
     if (typeof id !== "number") {
@@ -252,6 +254,7 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
       phase: "awaiting_auth",
       userId: null,
       dashboard: null,
+      theme: null,
       haWs: null,
       pending: new Map(),
       subscriptions: new Map(),
@@ -268,7 +271,34 @@ export function createWsProxy(config: Config, dashboards: Map<string, Dashboard>
     for (const ws of [...(byDashboard.get(dashboardId) ?? [])]) terminate(ws);
   }
 
-  return { handlers, upgrade, closeForUser, closeForDashboard };
+  /**
+   * Called after a dashboard was re-analysed. If what guests may access
+   * changed, their connections are closed: the frontend reconnects,
+   * resubscribes with the new allowlist and reloads the dashboard config.
+   * Otherwise they get the lovelace_updated event that was held back.
+   */
+  function dashboardChanged(dashboard: Dashboard): void {
+    if (dashboard.status !== "ok" || dashboard.accessChanged) {
+      closeForDashboard(dashboard.id);
+      return;
+    }
+    const event = {
+      event_type: "lovelace_updated",
+      data: { url_path: dashboard.urlPath, mode: "storage" },
+      origin: "LOCAL",
+      time_fired: new Date().toISOString(),
+      context: { id: crypto.randomUUID().replaceAll("-", ""), parent_id: null, user_id: null },
+    };
+    for (const ws of byDashboard.get(dashboard.id) ?? []) {
+      for (const [id, sub] of ws.data.subscriptions) {
+        if (sub.type === "subscribe_events" && sub.msg.event_type === "lovelace_updated") {
+          send(ws, { id, type: "event", event });
+        }
+      }
+    }
+  }
+
+  return { handlers, upgrade, closeForUser, closeForDashboard, dashboardChanged };
 }
 
 export type WsProxy = ReturnType<typeof createWsProxy>;

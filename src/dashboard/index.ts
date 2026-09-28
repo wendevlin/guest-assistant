@@ -30,6 +30,13 @@ export class Dashboard {
   private _mediaSources = new Set<string>();
   private listeners: Array<(d: Dashboard) => void> = [];
 
+  /**
+   * Whether the last (re)load changed what guests may access (entities,
+   * templates, media sources). Open guest connections then hold state
+   * filtered by the old allowlist and must start over.
+   */
+  accessChanged = false;
+
   constructor(id: string) {
     this.id = id;
   }
@@ -62,6 +69,7 @@ export class Dashboard {
 
   /** For tests and synthetic setups. */
   applyConfig(config: Obj): void {
+    const before = this.accessKey();
     const violations = validate(config);
     const extraction = extract(config);
     this._entities = extraction.entities;
@@ -70,6 +78,11 @@ export class Dashboard {
     this._mediaSources = extraction.mediaSources;
     this.violations = violations;
     this.status = violations.length === 0 ? "ok" : "rejected";
+    this.accessChanged = this.accessKey() !== before;
+  }
+
+  private accessKey(): string {
+    return JSON.stringify([[...this._entities].sort(), [...this._templates.keys()].sort(), [...this._mediaSources].sort()]);
   }
 
   /** Loads config from HA, extracts and validates, then resolves device ids. */
@@ -120,6 +133,7 @@ export class Dashboard {
   }
 
   private reject(violations: Violation[]): void {
+    this.accessChanged = this.status !== "rejected";
     this._entities = new Set();
     this._domains = new Set();
     this._devices = new Set();

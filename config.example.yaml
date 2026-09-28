@@ -22,8 +22,9 @@ home-assistant:
 base_url: "http://localhost:3001"
 port: 3001
 
-# Optional: serve the guest frontend from a build directory instead of ./public
-# frontend_development_repo: "/path/to/frontend/guest/dist"
+# Optional: serve the guest frontend from a checkout of guest-assistant-frontend
+# instead of ./public (repository root; its guest-assistant/dist is served)
+# frontend_development_repo: "/path/to/guest-assistant-frontend"
 
 dashboards:
   # `id` is the url_path of the dashboard in Home Assistant.
@@ -31,6 +32,12 @@ dashboards:
   # (take control of auto-generated dashboards first) and must not contain
   # custom cards, strategies, area/energy/iframe cards or navigation actions.
   - id: "guest-dashboard"
+    # Optional look of the guest UI. Users can override single fields with
+    # their own `theme:` block.
+    theme:
+      # name: "my-theme"           # a theme defined in HA (default: HA's default theme)
+      mode: "auto"                 # auto (follow the device), light or dark
+      guest_can_change_mode: true  # let guests switch auto/light/dark themselves
     users:
       - username: "guest"
         password: "change-me"

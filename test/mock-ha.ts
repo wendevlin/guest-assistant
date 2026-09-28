@@ -80,7 +80,7 @@ interface SockData {
   coalesce: boolean;
 }
 
-export function startMockHA(): MockHA {
+export function startMockHA(port = 0): MockHA {
   const serviceCalls: Obj[] = [];
   const restServiceCalls: Array<{ path: string; body: string }> = [];
   const dashboards = new Map<string, Obj>([
@@ -98,7 +98,7 @@ export function startMockHA(): MockHA {
   const event = (id: unknown, event: unknown) => JSON.stringify({ id, type: "event", event });
 
   const server = Bun.serve<SockData>({
-    port: 0,
+    port,
     fetch(req, server) {
       const url = new URL(req.url);
       if (url.pathname === "/api/websocket") {

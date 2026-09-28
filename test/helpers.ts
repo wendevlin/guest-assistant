@@ -44,15 +44,18 @@ export async function startTestEnv(): Promise<TestEnv> {
     "home-assistant": ha.haConfig,
     base_url: `http://localhost:${port}`,
     port,
-    dashboards: [],
-    frontend_development_repo: "./test/fixtures/public",
+    // Only read for theme settings here; users are synced from USERS below.
+    dashboards: [
+      { id: "guest-dash", theme: { name: "nord", mode: "dark", guest_can_change_mode: true }, users: [{ username: "guest", password: "unused-here" }] },
+    ],
+    frontend_development_repo: "./test/fixtures/frontend-repo",
   };
 
   const auth = createAuth(config, ":memory:");
   await migrate(auth);
   await syncUsers(auth, USERS);
 
-  const { server } = createServer({ config, dashboards, auth });
+  const { server } = createServer({ config, dashboards, auth, client });
   const url = `http://localhost:${server.port}`;
 
   return {

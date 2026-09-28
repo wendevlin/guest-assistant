@@ -15,7 +15,7 @@ export interface Extraction {
   entities: Set<string>;
   /** markdown card `content` -> full card config (used as render_template variables) */
   templates: Map<string, Obj>;
-  /** `media-source://…` ids referenced as images */
+  /** `media-source://…` ids referenced as images or in play_media actions */
   mediaSources: Set<string>;
 }
 
@@ -64,8 +64,9 @@ function walk(node: unknown, out: Extraction): void {
   if (node.type === "markdown" && typeof node.content === "string") {
     out.templates.set(node.content, node);
   }
-  if (typeof node.image === "string" && node.image.startsWith("media-source://")) {
-    out.mediaSources.add(node.image);
+  for (const key of ["image", "media_content_id"]) {
+    const value = node[key];
+    if (typeof value === "string" && value.startsWith("media-source://")) out.mediaSources.add(value);
   }
 
   for (const [key, value] of Object.entries(node)) {

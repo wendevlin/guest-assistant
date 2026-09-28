@@ -3,8 +3,9 @@ import { resolve, sep } from "node:path";
 import type { Auth } from "./auth";
 import { createGuard } from "./auth/guard";
 import { createHassTokenHandler } from "./auth/hass-token";
-import type { Config } from "./config";
+import { themeForUser, type Config } from "./config";
 import type { Dashboard } from "./dashboard";
+import type { HaClient } from "./ha/client";
 import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
 
@@ -12,6 +13,8 @@ export interface ServerDeps {
   config: Config;
   dashboards: Map<string, Dashboard>;
   auth: Auth;
+  /** The proxy's own HA connection; reported to the frontend via /api/guest-assistant/status. */
+  client?: Pick<HaClient, "connected">;
 }
 
 const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/hacsfiles/"];
@@ -31,20 +34,23 @@ function withClientIp(req: Request, server: Server<ConnState>): Request {
   return new Request(req, { headers });
 }
 
-export function createServer({ config, dashboards, auth }: ServerDeps, port: number = config.port) {
+export function createServer({ config, dashboards, auth, client }: ServerDeps, port: number = config.port) {
   const requireGuest = createGuard(auth, dashboards);
   const wsProxy = createWsProxy(config, dashboards);
   const httpRoutes = createHttpRoutes(config, requireGuest);
-  const hassToken = createHassTokenHandler(auth, dashboards);
+  const hassToken = createHassTokenHandler(auth, dashboards, (username) => themeForUser(config, username));
 
-  // A dashboard that turns invalid at runtime drops its guests immediately.
+  // A dashboard that turns invalid at runtime drops its guests immediately;
+  // a changed allowlist makes them reconnect.
   for (const dashboard of dashboards.values()) {
-    dashboard.onChange((d) => {
-      if (d.status !== "ok") wsProxy.closeForDashboard(d.id);
-    });
+    dashboard.onChange((d) => wsProxy.dashboardChanged(d));
   }
 
-  const frontendRoot = resolve(config.frontend_development_repo ?? "./public");
+  // Like HA core's `development_repo`: point at the frontend repository root,
+  // the build output inside it is served.
+  const frontendRoot = config.frontend_development_repo
+    ? resolve(config.frontend_development_repo, "guest-assistant/dist")
+    : resolve("./public");
 
   /** Resolves a request path inside the frontend build, or null if outside/missing. */
   async function frontendFile(pathname: string) {
@@ -94,6 +100,16 @@ export function createServer({ config, dashboards, auth }: ServerDeps, port: num
     routes: {
       "/api/auth/hass-token": { GET: hassToken },
       "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => auth.handler(withClientIp(req, server)),
+      // Lets the frontend tell "proxy unreachable" from "proxy cannot reach
+      // HA" while it reconnects. Public like HA's own /manifest.json; it only
+      // reveals whether the upstream connection is up.
+      "/api/guest-assistant/status": {
+        GET: () =>
+          Response.json(
+            { home_assistant: client?.connected === false ? "disconnected" : "connected" },
+            { headers: { "cache-control": "no-store" } },
+          ),
+      },
       "/api/websocket": (req: BunRequest, server: Server<ConnState>) => wsProxy.upgrade(req, server),
       ...httpRoutes,
       "/static/*": { GET: staticHandler, HEAD: staticHandler },

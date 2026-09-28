@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { GuestTheme } from "./config";
 
 /**
  * Signing secret is generated per process. Tokens are short-lived and the
@@ -17,6 +18,8 @@ export interface GuestTokenPayload {
   sid: string;
   /** dashboard id the user is bound to */
   dashboard: string;
+  /** theme settings from config.yaml, answered to the frontend by the WS proxy */
+  theme: GuestTheme;
   exp: number;
 }
 
@@ -55,6 +58,8 @@ export function verifyJWT(token: string): GuestTokenPayload | null {
       typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
       typeof payload.dashboard !== "string" ||
+      typeof payload.theme !== "object" ||
+      payload.theme === null ||
       typeof payload.exp !== "number"
     ) {
       return null;

@@ -53,6 +53,7 @@ export class HaClient {
   private closed = false;
   private reconnectListeners: Array<() => void> = [];
   private connectPromise: Promise<void> | null = null;
+  private authenticated = false;
   haVersion: string | undefined;
 
   constructor(private readonly ha: HAConfig) {}
@@ -64,6 +65,11 @@ export class HaClient {
       this.open(resolve, reject);
     });
     return this.connectPromise;
+  }
+
+  /** True while the proxy's own connection to HA is authenticated. */
+  get connected(): boolean {
+    return this.authenticated;
   }
 
   /** Called after every successful (re)connect except the first. */
@@ -145,6 +151,7 @@ export class HaClient {
       }
       if (msg.type === "auth_ok") {
         authenticated = true;
+        this.authenticated = true;
         this.haVersion = msg.ha_version;
         this.reconnectDelay = RECONNECT_MIN_MS;
         console.log(`Connected to Home Assistant ${msg.ha_version ?? ""}`.trim());
@@ -190,6 +197,7 @@ export class HaClient {
     const onGone = () => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.authenticated = false;
       for (const p of this.pending.values()) {
         clearTimeout(p.timer);
         p.reject(new HaCommandError("disconnected", "Connection to Home Assistant lost"));

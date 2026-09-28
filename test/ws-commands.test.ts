@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Dashboard } from "../src/dashboard";
-import { evaluate, type CommandContext, type Verdict } from "../src/proxy/ws-commands";
+import { COMMANDS, DROP, evaluate, type CommandContext, type Verdict } from "../src/proxy/ws-commands";
 import { GUEST_DASHBOARD } from "./mock-ha";
 
 const dashboard = new Dashboard("guest-dash");
@@ -47,6 +47,13 @@ describe("call_service", () => {
     expect(msg).toEqual({ id: 1, type: "call_service", domain: "light", service: "turn_off", target: { entity_id: ["light.kitchen"] } });
   });
 
+  test("accepts entity_id in service_data (as the HA frontend sends toggles) and moves it to target", () => {
+    const msg = expectForward({ type: "call_service", domain: "light", service: "toggle", service_data: { entity_id: "light.kitchen" } });
+    expect(msg).toEqual({ id: 1, type: "call_service", domain: "light", service: "toggle", target: { entity_id: ["light.kitchen"] } });
+    const withData = expectForward({ type: "call_service", domain: "light", service: "turn_on", service_data: { entity_id: ["light.kitchen"], brightness: 10 } });
+    expect(withData).toEqual({ id: 1, type: "call_service", domain: "light", service: "turn_on", target: { entity_id: ["light.kitchen"] }, service_data: { brightness: 10 } });
+  });
+
   test("allows lock.unlock when the lock is on the dashboard", () => {
     expectForward({ type: "call_service", domain: "lock", service: "unlock", target: { entity_id: ["lock.front"] } });
   });
@@ -58,7 +65,13 @@ describe("call_service", () => {
     expectReject({ type: "call_service", domain: "light", service: "turn_off", target: { entity_id: ["light.kitchen", "light.bedroom"] } });
     // legacy entity_id in service_data
     expectReject({ type: "call_service", domain: "light", service: "turn_off", service_data: { entity_id: "light.bedroom" } });
+    expectReject({ type: "call_service", domain: "light", service: "turn_off", service_data: { entity_id: "all" } });
+    expectReject({ type: "call_service", domain: "light", service: "turn_off", service_data: { entity_id: ["light.kitchen", "light.bedroom"] } });
+    // entity_id in both places, even if both are allowed
     expectReject({ type: "call_service", domain: "light", service: "turn_off", target: { entity_id: "light.kitchen" }, service_data: { entity_id: "all" } });
+    expectReject({ type: "call_service", domain: "light", service: "turn_off", target: { entity_id: "light.kitchen" }, service_data: { entity_id: "light.kitchen" } });
+    // other selectors next to a legacy entity_id
+    expectReject({ type: "call_service", domain: "light", service: "turn_off", service_data: { entity_id: "light.kitchen", area_id: "bedroom" } });
     // area / device / label targets
     expectReject({ type: "call_service", domain: "light", service: "turn_off", target: { area_id: "kitchen" } });
     expectReject({ type: "call_service", domain: "light", service: "turn_off", target: { entity_id: "light.kitchen", device_id: "x" } });
@@ -80,9 +93,112 @@ describe("call_service", () => {
     expectReject({ type: "call_service", domain: "light", service: "turn_on", target: { entity_id: "light.kitchen" }, return_response: true });
   });
 
+  test("service_data fields that reference other entities or media are checked", () => {
+    const d = new Dashboard("media");
+    d.applyConfig({
+      views: [
+        {
+          cards: [
+            { type: "media-control", entity: "media_player.living" },
+            { type: "media-control", entity: "media_player.kitchen" },
+            { type: "tile", entity: "script.party" },
+            { type: "tile", entity: "automation.lights" },
+            {
+              type: "button",
+              tap_action: {
+                action: "perform-action",
+                perform_action: "media_player.play_media",
+                target: { entity_id: "media_player.living" },
+                data: { media_content_id: "media-source://media_source/local/song.mp3", media_content_type: "music" },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const call = (service: string, entity: string, service_data: Record<string, unknown>) =>
+      evaluate(
+        { id: 1, type: "call_service", domain: entity.split(".")[0], service, target: { entity_id: entity }, service_data },
+        { dashboard: d, subscriptions: new Map() },
+      ).kind;
+
+    expect(call("join", "media_player.living", { group_members: ["media_player.kitchen"] })).toBe("forward");
+    expect(call("join", "media_player.living", { group_members: ["media_player.bedroom"] })).toBe("reject");
+    expect(call("join", "media_player.living", { group_members: ["media_player.kitchen", "media_player.bedroom"] })).toBe("reject");
+    expect(call("join", "media_player.living", { group_members: "all" })).toBe("reject");
+    expect(call("join", "media_player.living", {})).toBe("reject");
+    expect(call("join", "media_player.living", { group_members: ["script.party"] })).toBe("reject");
+
+    const song = "media-source://media_source/local/song.mp3";
+    expect(call("play_media", "media_player.living", { media_content_id: song, media_content_type: "music" })).toBe("forward");
+    expect(call("play_media", "media_player.living", { media_content_id: "https://example.com/a.mp3", media_content_type: "music" })).toBe("forward");
+    expect(call("play_media", "media_player.living", { media_content_id: "media-source://camera/camera.bedroom", media_content_type: "video" })).toBe("reject");
+    expect(call("play_media", "media_player.living", { media: { media_content_id: "media-source://camera/camera.bedroom" } })).toBe("reject");
+
+    expect(call("turn_on", "script.party", {})).toBe("forward");
+    expect(call("turn_on", "script.party", { variables: { target: "lock.front" } })).toBe("reject");
+    expect(call("trigger", "automation.lights", { variables: { target: "lock.front" } })).toBe("reject");
+    expect(call("turn_on", "homeassistant", {})).toBe("reject");
+    expect(
+      evaluate(
+        { id: 1, type: "call_service", domain: "homeassistant", service: "turn_on", target: { entity_id: "script.party" }, service_data: { variables: { x: 1 } } },
+        { dashboard: d, subscriptions: new Map() },
+      ).kind,
+    ).toBe("reject");
+  });
+
   test("homeassistant.turn_off works across domains for allowed entities only", () => {
     expectForward({ type: "call_service", domain: "homeassistant", service: "turn_off", target: { entity_id: ["light.kitchen", "camera.garden"] } });
     expectReject({ type: "call_service", domain: "homeassistant", service: "turn_off", target: { entity_id: ["light.kitchen", "light.bedroom"] } });
+  });
+});
+
+describe("lovelace", () => {
+  test("lovelace/info is forwarded without parameters", () => {
+    expect(expectForward({ type: "lovelace/info" })).toEqual({ id: 1, type: "lovelace/info" });
+    expectReject({ type: "lovelace/info", url_path: "other" });
+  });
+
+  test("HA's lovelace_updated is held back; the proxy sends its own after re-analysing", () => {
+    const sub = { type: "subscribe_events", msg: { type: "subscribe_events", event_type: "lovelace_updated" } };
+    const c = ctx(new Map([[5, sub]]));
+    const spec = COMMANDS.subscribe_events!;
+    expect(spec.filterEvent!({ event_type: "lovelace_updated", data: { url_path: "guest-dash" } }, c, sub.msg)).toBe(DROP);
+  });
+});
+
+describe("frontend user data", () => {
+  const withTheme = (theme: CommandContext["theme"], msg: Record<string, unknown>) =>
+    evaluate({ id: 1, ...msg }, { dashboard, theme, subscriptions: new Map() });
+
+  test("the proxy user's preferences are never read from HA", () => {
+    expect(run({ type: "frontend/subscribe_user_data", key: "language" })).toEqual({ kind: "reply", result: null, events: [{ value: null }] });
+    expect(run({ type: "frontend/get_user_data", key: "language" })).toEqual({ kind: "reply", result: { value: null } });
+    expect(run({ type: "frontend/get_user_data", key: "core" })).toEqual({ kind: "reply", result: { value: null } });
+    expectReject({ type: "frontend/subscribe_user_data", key: "dashboards" });
+  });
+
+  test("theme comes from config.yaml", () => {
+    expect(withTheme({ mode: "auto", guest_can_change_mode: false }, { type: "frontend/subscribe_user_data", key: "theme" })).toEqual({
+      kind: "reply",
+      result: null,
+      events: [{ value: { theme: "" } }],
+    });
+    expect(withTheme({ name: "nord", mode: "dark", guest_can_change_mode: true }, { type: "frontend/get_user_data", key: "theme" })).toEqual({
+      kind: "reply",
+      result: { value: { theme: "nord", dark: true } },
+    });
+    expect(withTheme({ mode: "light", guest_can_change_mode: false }, { type: "frontend/get_user_data", key: "theme" })).toEqual({
+      kind: "reply",
+      result: { value: { theme: "", dark: false } },
+    });
+  });
+
+  test("saving language/theme is acknowledged locally, other keys are rejected", () => {
+    expect(run({ type: "frontend/set_user_data", key: "language", value: { language: "de" } })).toEqual({ kind: "reply", result: null });
+    expect(run({ type: "frontend/set_user_data", key: "theme", value: { theme: "x", dark: true } })).toEqual({ kind: "reply", result: null });
+    expectReject({ type: "frontend/set_user_data", key: "core", value: { showAdvanced: true } });
+    expectReject({ type: "frontend/set_user_data", key: "dashboards", value: {} });
   });
 });
 

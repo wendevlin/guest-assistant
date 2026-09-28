@@ -36,12 +36,13 @@ Browser ──► guest-assistant (Bun) ──► Home Assistant
 | Area | Allowed |
 |---|---|
 | States | only entities on the dashboard (WS `get_states`, `subscribe_entities`, REST `/api/states`) |
-| Service calls | `target.entity_id` ⊆ allowlist, service from a per-domain allowlist, `homeassistant.turn_on/off/toggle`; no `service_data.entity_id`, no area/device/label targets, no `all`, no templates |
+| Service calls | `target.entity_id` ⊆ allowlist, service from a per-domain allowlist, `homeassistant.turn_on/off/toggle` (without service data); no area/device/label targets, no `all`, no templates. Fields that point at other things are checked too: `media_player.join` `group_members` ⊆ allowlist, `play_media` only with `media-source://` ids written into the dashboard, no `variables` for `script.turn_on` / `automation.trigger` |
 | History, logbook, statistics | only for allowed entities, responses filtered |
 | Cameras | stream, WebRTC and signed snapshot URLs for allowed cameras only |
 | Templates | only markdown templates that appear verbatim in the dashboard; `variables` are fixed by the proxy |
 | Registries | entity/device registries reduced to allowed entities and their devices |
 | Config | location, URLs and Assist are hidden |
+| User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` comes from `config.yaml` |
 
 Everything else (`execute_script`, `search/related`, `tag/list`, media
 browsing, energy, arbitrary REST paths, better-auth account management, …) is
@@ -85,10 +86,19 @@ port: 3001
 
 dashboards:
   - id: "guest-dashboard"          # url_path of the HA dashboard ("lovelace" = default)
+    theme:                         # optional
+      name: "nord"                 # an HA theme; omitted = HA's default theme
+      mode: "auto"                 # auto (follow the device) | light | dark
+      guest_can_change_mode: false # show auto/light/dark in the guest's settings
     users:
       - username: "guest"
         password: "change-me"
+        theme:                     # optional, overrides single fields above
+          mode: "dark"
 ```
+
+Guests change their language (and, if allowed, light/dark mode) in the
+settings dialog; the choice is stored on their device only.
 
 Users are synced from the config on every start: created, updated (password or
 dashboard change invalidates sessions) and removed when no longer listed.
@@ -103,12 +113,11 @@ bun run typecheck
 bun test
 ```
 
-The guest frontend is served from `./public` or from
-`frontend_development_repo`. Its source lives in the sibling repository
-`guest-assistant-frontend` (a fork of the Home Assistant frontend) under
-`guest-assistant/`; `guest-assistant/script/develop` there builds into
-`guest-assistant/dist`, which is the directory to point
-`frontend_development_repo` at.
+The guest frontend is served from `./public`, or, like HA core's
+`development_repo`, from a frontend checkout: set `frontend_development_repo`
+to the root of the sibling repository `guest-assistant-frontend` (a fork of
+the Home Assistant frontend) and the proxy serves its `guest-assistant/dist`.
+`guest-assistant/script/develop` there builds into that directory.
 
 ## Endpoints the frontend uses
 

@@ -10,6 +10,7 @@
  * and the respective component websocket_api modules.
  */
 
+import type { GuestTheme } from "../config";
 import type { Dashboard } from "../dashboard";
 import { entityDomain, isEntityId } from "../dashboard";
 import * as F from "./ws-filters";
@@ -23,6 +24,8 @@ export interface TrackedCommand {
 
 export interface CommandContext {
   dashboard: Dashboard;
+  /** theme settings of the guest (from config.yaml) */
+  theme?: GuestTheme;
   /** subscriptions established on this connection (id → command) */
   subscriptions: ReadonlyMap<number, TrackedCommand>;
 }
@@ -136,7 +139,10 @@ function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Ob
     case "device_registry_updated":
       return typeof data.device_id === "string" && ctx.dashboard.allowedDevices.has(data.device_id) ? event : DROP;
     case "lovelace_updated":
-      return (data.url_path ?? null) === ctx.dashboard.urlPath ? event : DROP;
+      // Never passed through: the proxy re-analyses the dashboard first and
+      // then notifies guests itself (see WsProxy.dashboardChanged), so the
+      // frontend never reloads against the old allowlist.
+      return DROP;
     default:
       return event;
   }
@@ -186,6 +192,31 @@ export const ENTITY_SERVICES: Record<string, readonly string[]> = {
 const HOMEASSISTANT_SERVICES = new Set(["turn_on", "turn_off", "toggle"]);
 const TARGET_SELECTOR_KEYS = ["entity_id", "device_id", "area_id", "label_id", "floor_id"];
 
+/**
+ * service_data fields that reference other entities or media and would
+ * otherwise let a guest act on things outside the allowlist through an
+ * allowed entity. Each check returns an error message or null.
+ */
+const SERVICE_DATA_CHECKS: Record<string, (data: Obj, ctx: CommandContext) => string | null> = {
+  "media_player.join": (data, ctx) => {
+    const members = allowedIds(data.group_members, A(ctx));
+    if (!members || !members.every((id) => entityDomain(id) === "media_player")) return "group_members not allowed";
+    return null;
+  },
+  "media_player.play_media": (data, ctx) => {
+    // media-source ids can address other entities (media-source://camera/…)
+    // and local media; only ids written into the dashboard are allowed.
+    const ids = [data.media_content_id, isObj(data.media) ? data.media.media_content_id : undefined];
+    for (const v of ids) {
+      if (typeof v === "string" && v.startsWith("media-source://") && !ctx.dashboard.mediaSources.has(v)) return "media_content_id not allowed";
+    }
+    return null;
+  },
+  // Script/automation variables can carry entity ids into the script.
+  "script.turn_on": (data) => ("variables" in data ? "variables not allowed" : null),
+  "automation.trigger": (data) => ("variables" in data ? "variables not allowed" : null),
+};
+
 function containsTemplate(value: unknown): boolean {
   if (typeof value === "string") return value.includes("{{") || value.includes("{%");
   if (Array.isArray(value)) return value.some(containsTemplate);
@@ -198,31 +229,55 @@ export function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
   if (typeof domain !== "string" || typeof service !== "string") return reject("domain/service required");
   if (msg.return_response !== undefined && msg.return_response !== false) return reject("return_response not allowed");
 
-  const target = msg.target;
-  if (!isObj(target)) return reject("target.entity_id required");
-  const extraTargetKeys = Object.keys(target).filter((k) => k !== "entity_id");
-  if (extraTargetKeys.length > 0) return reject(`target may only contain entity_id`);
-  const ids = allowedIds(target.entity_id, A(ctx));
-  if (!ids) return reject("target.entity_id not allowed");
-
+  let serviceData: Obj | undefined;
   if (msg.service_data !== undefined) {
     if (!isObj(msg.service_data)) return reject("service_data must be an object");
+    serviceData = { ...msg.service_data };
+  }
+
+  // The entity comes either from `target.entity_id` or, as the HA frontend
+  // sends it for toggles, from `service_data.entity_id`; never from both.
+  // Either way it is forwarded as `target.entity_id` only.
+  let rawIds: unknown;
+  if (msg.target !== undefined) {
+    const target = msg.target;
+    if (!isObj(target)) return reject("target must be an object");
+    const extraTargetKeys = Object.keys(target).filter((k) => k !== "entity_id");
+    if (extraTargetKeys.length > 0) return reject(`target may only contain entity_id`);
+    if (serviceData && "entity_id" in serviceData) return reject("entity_id in both target and service_data");
+    rawIds = target.entity_id;
+  } else if (serviceData && "entity_id" in serviceData) {
+    rawIds = serviceData.entity_id;
+    delete serviceData.entity_id;
+  } else {
+    return reject("entity_id required");
+  }
+  const ids = allowedIds(rawIds, A(ctx));
+  if (!ids) return reject("entity_id not allowed");
+
+  if (serviceData) {
     for (const key of TARGET_SELECTOR_KEYS) {
-      if (key in msg.service_data) return reject(`service_data.${key} not allowed`);
+      if (key in serviceData) return reject(`service_data.${key} not allowed`);
     }
-    if (containsTemplate(msg.service_data)) return reject("templates in service_data not allowed");
+    if (containsTemplate(serviceData)) return reject("templates in service_data not allowed");
   }
 
   if (domain === "homeassistant") {
     if (!HOMEASSISTANT_SERVICES.has(service)) return reject("service not allowed");
+    // homeassistant.* hands its service_data on to each entity's own domain,
+    // where the per-service checks below would not run.
+    if (serviceData && Object.keys(serviceData).length > 0) return reject("service_data not allowed for homeassistant services");
   } else {
     const allowed = ENTITY_SERVICES[domain];
     if (!allowed || !allowed.includes(service)) return reject("service not allowed");
     if (!ids.every((id) => entityDomain(id) === domain)) return reject("target domain mismatch");
+    const check = SERVICE_DATA_CHECKS[`${domain}.${service}`];
+    const error = check?.(serviceData ?? {}, ctx);
+    if (error) return reject(error);
   }
 
   const out: Obj = { id: msg.id, type: "call_service", domain, service, target: { entity_id: ids } };
-  if (msg.service_data !== undefined) out.service_data = msg.service_data;
+  if (serviceData && Object.keys(serviceData).length > 0) out.service_data = serviceData;
   return forward(out);
 }
 
@@ -285,6 +340,28 @@ function validateSubscribeEntities(msg: Obj, ctx: CommandContext): Verdict {
   return forward({ id: msg.id, type: "subscribe_entities", entity_ids: ids });
 }
 
+// ── frontend user data ───────────────────────────────────────────────────
+
+/** Value of a frontend user-data key as the proxy answers it; undefined = not allowed. */
+function localUserData(key: unknown, ctx: CommandContext): unknown {
+  switch (key) {
+    case "language":
+      return null;
+    case "theme": {
+      const theme = ctx.theme;
+      if (!theme) return null;
+      // Same shape as HA's ThemeSettings; `dark` unset means "follow the device".
+      const value: Obj = { theme: theme.name ?? "" };
+      if (theme.mode !== "auto") value.dark = theme.mode === "dark";
+      return value;
+    }
+    case "core":
+      return null;
+    default:
+      return undefined;
+  }
+}
+
 // ── the table ────────────────────────────────────────────────────────────
 
 const HISTORY_FIELDS = ["entity_ids", "start_time", "end_time", "minimal_response", "no_attributes", "significant_changes_only", "include_start_time_state"];
@@ -335,12 +412,34 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "frontend/get_themes": { fields: [] },
   "frontend/get_translations": { fields: ["language", "category", "integration", "config_flow"] },
   "frontend/get_icons": { fields: ["category", "integration"] },
-  "frontend/get_user_data": { fields: ["key"], validate: keyIn(["core", "language", "theme"]) },
-  "frontend/subscribe_user_data": { fields: ["key"], subscription: true, validate: keyIn(["core", "language", "theme"]) },
+  // User data belongs to the HA user behind the proxy token, so it is never
+  // read from or written to HA. "language" is answered as unset (guests pick
+  // it on their device), "theme" comes from config.yaml, and saving either is
+  // acknowledged without effect: the frontend keeps the choice locally.
+  "frontend/get_user_data": {
+    fields: ["key"],
+    validate: (msg, ctx) => {
+      const value = localUserData(msg.key, ctx);
+      return value === undefined ? reject("key not allowed") : { kind: "reply", result: { value } };
+    },
+  },
+  "frontend/subscribe_user_data": {
+    fields: ["key"],
+    subscription: true,
+    validate: (msg, ctx) => {
+      const value = localUserData(msg.key, ctx);
+      return value === undefined ? reject("key not allowed") : { kind: "reply", result: null, events: [{ value }] };
+    },
+  },
+  "frontend/set_user_data": {
+    fields: ["key", "value"],
+    validate: (msg) => (msg.key === "language" || msg.key === "theme" ? { kind: "reply", result: null } : reject("key not allowed")),
+  },
   "frontend/subscribe_system_data": { fields: ["key"], subscription: true, validate: keyIn(["core", "labs"]) },
 
   // Lovelace (read-only)
-  "lovelace/info": { fields: ["url_path"], validate: (msg, ctx) => forward({ id: msg.id, type: "lovelace/info", url_path: ctx.dashboard.urlPath }) },
+  // HA's lovelace/info takes no parameters (it only reports the resource mode).
+  "lovelace/info": { fields: [], validate: (msg) => forward({ id: msg.id, type: "lovelace/info" }) },
   "lovelace/config": {
     fields: ["url_path", "force"],
     validate: (msg, ctx) => forward({ id: msg.id, type: "lovelace/config", url_path: ctx.dashboard.urlPath, force: msg.force === true }),
