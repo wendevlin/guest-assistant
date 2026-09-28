@@ -469,8 +469,11 @@ export const COMMANDS: Record<string, CommandSpec> = {
             ],
     }),
   },
-  "lovelace/resources": { fields: [] },
-  "lovelace/resources/list": { fields: [] },
+  // Lovelace resources are custom JavaScript (custom cards, plugins such as
+  // wallpanel). Guest dashboards cannot use custom cards, so guests get an
+  // empty list and no foreign code runs in the guest UI.
+  "lovelace/resources": { fields: [], validate: () => ({ kind: "reply", result: [] }) },
+  "lovelace/resources/list": { fields: [], validate: () => ({ kind: "reply", result: [] }) },
 
   // Registries
   "config/entity_registry/list_for_display": { fields: [], filterResult: (r, ctx) => F.filterEntityRegistryDisplay(r, A(ctx)) },

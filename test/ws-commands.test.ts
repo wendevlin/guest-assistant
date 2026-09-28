@@ -159,6 +159,11 @@ describe("call_service", () => {
 });
 
 describe("lovelace", () => {
+  test("lovelace resources (custom JavaScript) are answered as empty", () => {
+    expect(run({ type: "lovelace/resources" })).toEqual({ kind: "reply", result: [] });
+    expect(run({ type: "lovelace/resources/list" })).toEqual({ kind: "reply", result: [] });
+  });
+
   test("lovelace/info is forwarded without parameters", () => {
     expect(expectForward({ type: "lovelace/info" })).toEqual({ id: 1, type: "lovelace/info" });
     expectReject({ type: "lovelace/info", url_path: "other" });

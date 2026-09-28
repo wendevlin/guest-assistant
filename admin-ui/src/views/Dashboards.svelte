@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Check from "@lucide/svelte/icons/check";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Plus from "@lucide/svelte/icons/plus";
   import * as Alert from "$lib/components/ui/alert";
@@ -21,8 +22,9 @@
   let error = $state<string | null>(null);
   let open = $state<string | null>(null);
   let adding = $state(false);
-  let drafts = $state<Record<string, ThemeSettings>>({});
+  /** Dashboard id that was just saved, for a short confirmation. */
   let saved = $state<string | null>(null);
+  let savedTimer: ReturnType<typeof setTimeout> | undefined;
   let removing = $state<DashboardView | null>(null);
   let confirmOpen = $state(false);
 
@@ -35,13 +37,23 @@
     }
   }
 
-  async function run(action: () => Promise<DashboardsView>) {
+  async function run(action: () => Promise<DashboardsView>): Promise<boolean> {
     error = null;
     try {
       data = await action();
+      return true;
     } catch (err) {
       error = message(err);
+      return false;
     }
+  }
+
+  /** Changes take effect immediately; a short "Saved" confirms it. */
+  async function save(id: string, changes: { theme?: ThemeSettings; answers?: Record<string, string> }) {
+    if (!(await run(() => api.updateDashboard(id, changes)))) return;
+    saved = id;
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => (saved = null), 2500);
   }
 
   /** Stored answers plus the new one; the server replaces the whole set. */
@@ -49,15 +61,7 @@
     const answers: Record<string, string> = {};
     for (const other of d.questions) if (other.answered) answers[other.key] = other.answer;
     answers[q.key] = value;
-    void run(() => api.updateDashboard(d.id, { answers }));
-  }
-
-  async function saveTheme(d: DashboardView) {
-    const theme = drafts[d.id];
-    if (!theme) return;
-    await run(() => api.updateDashboard(d.id, { theme }));
-    delete drafts[d.id];
-    saved = d.id;
+    void save(d.id, { answers });
   }
 
   $effect(() => {
@@ -116,6 +120,9 @@
             <span class="truncate font-medium">{d.title}</span>
             <span class="truncate text-sm text-muted-foreground">/{d.id}</span>
           </span>
+          {#if saved === d.id}
+            <span class="flex items-center gap-1 text-sm text-success" role="status"><Check class="size-4" />{t("saved")}</span>
+          {/if}
           <span class="w-full ps-7 sm:w-auto sm:ps-0"><StatusBadges dashboard={d} /></span>
         </button>
         {#if isOpen}
@@ -125,18 +132,7 @@
             <Separator />
             <section class="grid gap-3">
               <h3 class="font-medium">{t("dash.theme")}</h3>
-              <ThemeEditor
-                value={drafts[d.id] ?? d.theme}
-                {themes}
-                onchange={(v) => {
-                  drafts[d.id] = v;
-                  saved = null;
-                }}
-              />
-              <div class="flex items-center gap-3">
-                <Button variant="outline" disabled={!drafts[d.id]} onclick={() => saveTheme(d)}>{t("save")}</Button>
-                {#if saved === d.id}<span class="text-sm text-muted-foreground">{t("saved")}</span>{/if}
-              </div>
+              <ThemeEditor value={d.theme} {themes} onchange={(theme) => save(d.id, { theme })} />
             </section>
             <Separator />
             <div>

@@ -35,11 +35,11 @@ describe("questions and rewriting", () => {
       views: [
         {
           cards: [
-            { type: "button", tap_action: { action: "url", url_path: "https://ok.example" } },
-            { type: "button", double_tap_action: { action: "url", url_path: "https://new.example" } },
-            { type: "button", tap_action: { action: "navigate", navigation_path: "/d/2" } },
-            { type: "button", tap_action: { action: "navigate", navigation_path: "/other" } },
-            { type: "button", tap_action: { action: "navigate" } },
+            { type: "button", entity: "light.a", tap_action: { action: "url", url_path: "https://ok.example" } },
+            { type: "button", entity: "light.a", double_tap_action: { action: "url", url_path: "https://new.example" } },
+            { type: "button", entity: "light.a", tap_action: { action: "navigate", navigation_path: "/d/2" } },
+            { type: "button", entity: "light.a", tap_action: { action: "navigate", navigation_path: "/other" } },
+            { type: "button", entity: "light.a", tap_action: { action: "navigate" } },
             { type: "entities", entities: [{ entity: "light.a", tap_action: { action: "url", url_path: "https://new.example" } }] },
           ],
         },
@@ -55,6 +55,34 @@ describe("questions and rewriting", () => {
     expect(cards[5].entities[0].tap_action).toEqual({ action: "none" });
     // the input is not modified
     expect(config.views[0]!.cards[1]!.double_tap_action!.action).toBe("url");
+  });
+
+  test("a button that only held a blocked link disappears; others stay", () => {
+    const deadButton = { type: "button", name: "Music", icon: "mdi:music", tap_action: { action: "navigate", navigation_path: "/music" } };
+    const config = {
+      views: [
+        {
+          sections: [
+            {
+              cards: [
+                deadButton,
+                { type: "button", entity: "light.a", tap_action: { action: "url", url_path: "https://x.example" } },
+                { type: "button", name: "Sub", tap_action: { action: "navigate", navigation_path: "/d/sub" } },
+                { type: "button", name: "Ok", tap_action: { action: "url", url_path: "https://ok.example" } },
+                { type: "button", name: "Hold", tap_action: { action: "url", url_path: "https://x.example" }, hold_action: { action: "navigate", navigation_path: "/d/2" } },
+                { type: "conditional", conditions: [], card: deadButton },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const out = rewriteForGuests(config, "d", { allowedUrls: new Set(["https://ok.example"]), groupablePlayers: new Set() }) as any;
+    const cards = out.views[0].sections[0].cards;
+    expect(cards.map((c: any) => c.name ?? c.entity ?? c.type)).toEqual(["light.a", "Sub", "Ok", "Hold", "conditional"]);
+    expect(cards[0].tap_action).toEqual({ action: "none" });
+    // a single card slot cannot be emptied, the button stays inert
+    expect(cards[4].card.tap_action).toEqual({ action: "none" });
   });
 
   test("invalid answers count as unanswered", () => {

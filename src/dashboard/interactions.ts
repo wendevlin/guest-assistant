@@ -115,24 +115,14 @@ export function isAnswered(q: Question, answers: Readonly<Record<string, string>
 /**
  * The dashboard config as guests get it: navigation outside the dashboard
  * and web links the admin has not allowed are replaced by `action: none`.
+ * A button card without an entity whose only purpose was such a link is
+ * removed entirely, so guests do not see a button that does nothing.
  * Works on any config, also one HA changed since the last analysis: unknown
  * links are blocked.
  */
 export function rewriteForGuests(config: unknown, urlPath: string | null, decisions: Decisions): unknown {
   const prefix = dashboardPrefix(urlPath);
-  const rewrite = (node: unknown): unknown => {
-    if (Array.isArray(node)) return node.map(rewrite);
-    if (!isObj(node)) return node;
-    const out: Obj = {};
-    for (const [key, value] of Object.entries(node)) {
-      if (ACTION_KEYS.has(key) && isObj(value) && isBlocked(value)) {
-        out[key] = { action: "none" };
-      } else {
-        out[key] = rewrite(value);
-      }
-    }
-    return out;
-  };
+
   const isBlocked = (action: Obj): boolean => {
     if (action.action === "navigate") {
       return typeof action.navigation_path !== "string" || !isInsideDashboard(action.navigation_path, prefix);
@@ -142,7 +132,44 @@ export function rewriteForGuests(config: unknown, urlPath: string | null, decisi
     }
     return false;
   };
+
+  /** Returns the rewritten node, or null for a card that should disappear. */
+  const rewrite = (node: unknown): unknown => {
+    if (Array.isArray(node)) {
+      // Only list entries can be dropped; a single `card:` keeps its dead button.
+      return node.flatMap((item) => {
+        const out = rewriteObject(item);
+        return out.dead ? [] : [out.value];
+      });
+    }
+    return rewriteObject(node).value;
+  };
+
+  const rewriteObject = (node: unknown): { value: unknown; dead: boolean } => {
+    if (!isObj(node)) return { value: Array.isArray(node) ? rewrite(node) : node, dead: false };
+    const out: Obj = {};
+    let blocked = false;
+    for (const [key, value] of Object.entries(node)) {
+      if (ACTION_KEYS.has(key) && isObj(value) && isBlocked(value)) {
+        out[key] = { action: "none" };
+        blocked = true;
+      } else {
+        out[key] = rewrite(value);
+      }
+    }
+    return { value: out, dead: blocked && isDeadButton(out) };
+  };
+
   return rewrite(config);
+}
+
+/** A button card without entity whose actions all do nothing. */
+function isDeadButton(card: Obj): boolean {
+  if (card.type !== "button" || card.entity !== undefined) return false;
+  return [...ACTION_KEYS].every((key) => {
+    const action = card[key];
+    return action === undefined || (isObj(action) && action.action === "none");
+  });
 }
 
 function walkActions(node: unknown, path: string, visit: (action: Obj, path: string) => void): void {
