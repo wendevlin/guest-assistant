@@ -167,7 +167,18 @@ The guest frontend is served from `./public`, or, like HA core's
 `GUEST_ASSISTANT_FRONTEND_REPO` to the root of the sibling repository
 `guest-assistant-frontend` (a fork of the Home Assistant frontend) and the
 proxy serves its `guest-assistant/dist`. `guest-assistant/script/develop`
-there builds into that directory.
+there builds into that directory. The fork lives at
+[wendevlin/guest-assistant-frontend](https://github.com/wendevlin/guest-assistant-frontend)
+(branch `guest-assistant`); every push there publishes the built guest page as
+a release.
+
+### Releases
+
+`.github/workflows/build.yaml` typechecks and tests every push. A tag `vX.Y.Z`
+that matches `version` in `addon/config.yaml` also builds the app images for
+amd64 and aarch64 and pushes them to `ghcr.io/wendevlin/{arch}-guest-assistant`.
+The guest page in the image is the frontend release named in
+`.github/frontend-release`; bump that file to ship a newer frontend.
 
 The admin page lives in `admin-ui/`: Svelte 5 with shadcn-svelte components,
 built by Bun alone (`admin-ui/build.ts` with `bun-plugin-svelte` and
@@ -185,3 +196,9 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
 - `GET /api/states`, `/api/camera_proxy/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`
 - `GET /static/*`, `/local/*`, `/hacsfiles/*` (public, as in HA)
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). The guest page is built from a
+fork of the [Home Assistant frontend](https://github.com/home-assistant/frontend),
+which is also licensed under Apache 2.0.

@@ -1,0 +1,104 @@
+name: Build
+
+# Tests every push and pull request. A tag vX.Y.Z (matching `version` in
+# addon/config.yaml) also builds the app images and pushes them to
+# ghcr.io/wendevlin/{arch}-guest-assistant:X.Y.Z.
+#
+# The guest frontend is not built here: it comes from the release of
+# wendevlin/guest-assistant-frontend named in .github/frontend-release.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4"
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
+  image:
+    name: Image (${{ matrix.arch }})
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4"
+      - run: bun install --frozen-lockfile
+
+      - name: Download the guest frontend
+        run: |
+          release=$(cat .github/frontend-release)
+          mkdir -p .build/frontend-dist
+          curl -fsSL "https://github.com/wendevlin/guest-assistant-frontend/releases/download/${release}/guest-assistant-frontend.tar.gz" \
+            | tar -xz -C .build/frontend-dist
+
+      - name: Package
+        run: scripts/build-addon.sh --frontend .build/frontend-dist
+
+      - name: Version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' addon/config.yaml)
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "Tag $REF_NAME does not match version $version in addon/config.yaml" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker build dist/addon/guest_assistant \
+            --build-arg BUILD_ARCH="$ARCH" \
+            --build-arg BUILD_VERSION="$VERSION" \
+            --tag "ghcr.io/wendevlin/${ARCH}-guest-assistant:${VERSION}" \
+            --tag "ghcr.io/wendevlin/${ARCH}-guest-assistant:latest"
+
+      - name: Push
+        if: github.ref_type == 'tag'
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          docker push "ghcr.io/wendevlin/${ARCH}-guest-assistant:${VERSION}"
+          docker push "ghcr.io/wendevlin/${ARCH}-guest-assistant:latest"
