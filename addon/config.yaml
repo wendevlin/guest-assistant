@@ -1,7 +1,8 @@
-# Home Assistant app (add-on) manifest. Untested skeleton, see addon/README.md.
+# Home Assistant app (add-on) manifest. Package it with scripts/build-addon.sh;
+# without an `image` the Supervisor builds the Dockerfile on the device.
 name: Guest Assistant
 description: Give guests their own login to exactly one dashboard
-version: "0.4.0"
+version: "0.5.0"
 slug: guest_assistant
 url: https://github.com/wendevlin/guest-assistant
 arch:
@@ -15,12 +16,12 @@ ingress_port: 8099
 panel_icon: mdi:account-key
 panel_title: Guest Assistant
 panel_admin: true
-# Port guests open. It is not behind HA's login.
+# Port guests open. It is not behind HA's login. The host port can be changed
+# on the app's Configuration tab under "Network"; inside the container it stays 3001.
 ports:
   3001/tcp: 3001
 ports_description:
-  3001/tcp: Guest page
+  3001/tcp: Guest page (port guests open, not behind the HA login)
 # Lets the app create its own non-admin HA user through the Supervisor.
 homeassistant_api: true
 hassio_api: true
-image: "ghcr.io/wendevlin/{arch}-guest-assistant"

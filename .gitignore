@@ -9,3 +9,5 @@ data/
 *.db-wal
 *.sqlite
 .env
+.build/
+.claude/settings.local.json
