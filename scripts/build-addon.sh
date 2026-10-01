@@ -1,7 +1,7 @@
 #!/bin/sh
 # Packages Guest Assistant as a local Home Assistant app (add-on):
 #   dist/addon/guest_assistant/
-# Copy that folder (four files) into the `addons` share of the HA machine (Samba app), then
+# Copy that folder (five files) into the `addons` share of the HA machine (Samba app), then
 # Settings > Apps > App store > ⋮ > Check for updates, and install
 # "Guest Assistant" from "Local apps". The Supervisor builds the image there.
 #
@@ -54,7 +54,9 @@ bun run build:admin
 
 rm -rf "$OUT"
 mkdir -p "$OUT/app/admin-ui"
-cp addon/config.yaml addon/Dockerfile addon/README.md "$OUT/"
+# Without `image` the Supervisor builds the Dockerfile instead of pulling the release image.
+grep -v '^image:' guest_assistant/config.yaml > "$OUT/config.yaml"
+cp guest_assistant/Dockerfile guest_assistant/README.md guest_assistant/DOCS.md "$OUT/"
 cp -r package.json bun.lock tsconfig.json src "$OUT/app/"
 cp admin-ui/package.json "$OUT/app/admin-ui/"
 cp -r admin-ui/dist "$OUT/app/admin-ui/dist"
@@ -66,4 +68,4 @@ cp -r "$FRONTEND_DIST" "$OUT/app/public"
 tar -C "$OUT/app" -czf "$OUT/app.tar.gz" .
 rm -rf "$OUT/app"
 
-echo "Packaged $(sed -n 's/^version: *//p' addon/config.yaml | tr -d '"') in $OUT ($(du -sh "$OUT" | cut -f1))"
+echo "Packaged $(sed -n 's/^version: *//p' guest_assistant/config.yaml | tr -d '"') in $OUT ($(du -sh "$OUT" | cut -f1))"

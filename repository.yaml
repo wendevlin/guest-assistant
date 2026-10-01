@@ -1,0 +1,6 @@
+# Lets Home Assistant use this repository as an app repository:
+# Settings > Apps > App store > ⋮ > Repositories > add
+# https://github.com/wendevlin/guest-assistant
+name: Guest Assistant
+url: https://github.com/wendevlin/guest-assistant
+maintainer: Wendelin (@wendevlin)

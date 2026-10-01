@@ -73,6 +73,23 @@ Markdown templates are treated as trusted admin content. A template such as
 `{{ states | list }}` in a guest markdown card deliberately reveals everything;
 do not put such templates on guest dashboards.
 
+## Installing as a Home Assistant app
+
+This repository is also a Home Assistant app repository. In Home Assistant go
+to Settings > Apps > App store > ⋮ > Repositories, add
+`https://github.com/wendevlin/guest-assistant` and install "Guest Assistant".
+The Supervisor pulls the prebuilt image for your machine (amd64 or aarch64).
+`guest_assistant/DOCS.md` is the documentation shown in Home Assistant.
+
+**Testing a local build** (development): `scripts/build-addon.sh` builds the
+guest frontend from the committed `guest-assistant` branch of the frontend
+checkout and the admin page, and packages them into
+`dist/addon/guest_assistant/`. Copy that folder into the `addons` share of the
+HA machine (Samba app), then Check for updates in the app store and install
+"Guest Assistant" from "Local apps". The Supervisor builds that one on the
+device. To update, run the script again, copy the folder over the old one and
+raise `version` or use "Rebuild".
+
 ## Setting up
 
 There is no configuration file. Everything is managed on the admin page.
@@ -99,7 +116,7 @@ steps 2 to 4 again and replaces the proxy's old HA user.
 
 **As a Home Assistant app** the Supervisor token acts as administrator, so
 set-up needs no input. The admin page is only reachable through ingress. See
-`addon/README.md`; the packaging there is not tested on a real Supervisor yet.
+[Installing as a Home Assistant app](#installing-as-a-home-assistant-app).
 
 ### Questions for the admin
 
@@ -175,7 +192,7 @@ a release.
 ### Releases
 
 `.github/workflows/build.yaml` typechecks and tests every push. A tag `vX.Y.Z`
-that matches `version` in `addon/config.yaml` also builds the app images for
+that matches `version` in `guest_assistant/config.yaml` also builds the app images for
 amd64 and aarch64 and pushes them to `ghcr.io/wendevlin/{arch}-guest-assistant`.
 The guest page in the image is the frontend release named in
 `.github/frontend-release`; bump that file to ship a newer frontend.

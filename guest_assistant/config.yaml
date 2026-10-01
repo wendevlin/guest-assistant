@@ -1,5 +1,7 @@
-# Home Assistant app (add-on) manifest. Package it with scripts/build-addon.sh;
-# without an `image` the Supervisor builds the Dockerfile on the device.
+# Home Assistant app manifest. Installed from this repository, the Supervisor
+# pulls the image that CI builds for the tag v<version> (.github/workflows/build.yaml).
+# scripts/build-addon.sh packages a local app instead: it drops the `image`
+# line, so the Supervisor builds the Dockerfile on the device.
 name: Guest Assistant
 description: Give guests their own login to exactly one dashboard
 version: "0.5.0"
@@ -25,3 +27,4 @@ ports_description:
 # Lets the app create its own non-admin HA user through the Supervisor.
 homeassistant_api: true
 hassio_api: true
+image: ghcr.io/wendevlin/{arch}-guest-assistant

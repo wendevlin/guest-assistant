@@ -1,5 +1,5 @@
 # Built by the Supervisor from the folder that scripts/build-addon.sh packages
-# (dist/addon/guest_assistant). app.tar.gz holds the source plus the already
+# (dist/addon/guest_assistant) and that CI builds the images from. app.tar.gz holds the source plus the already
 # built guest frontend (public) and admin page (admin-ui/dist); only runtime
 # dependencies are installed here.
 FROM oven/bun:1.4-alpine
