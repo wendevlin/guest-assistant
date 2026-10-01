@@ -20,7 +20,7 @@ export interface TestEnv {
   hassToken(cookie: string): Promise<{ status: number; body: Record<string, unknown> }>;
 }
 
-export const USERS = [
+const USERS = [
   { username: "guest", password: "guest-pass-123", dashboard: "guest-dash" },
   { username: "badguest", password: "bad-pass-123", dashboard: "bad-dash" },
 ];
@@ -31,7 +31,6 @@ export function testEnvConfig(port: number): Env {
     dataDir: ":memory:",
     frontendRepo: "./test/fixtures/frontend-repo",
     ingressPort: port + 1,
-    legacyConfigPath: "/nonexistent/config.yaml",
     adminUiDir: "./test/fixtures/admin-ui",
   };
 }
@@ -55,9 +54,9 @@ export async function startTestEnv({ configured = true, mode = "standalone" as M
 
   if (configured) {
     store.set("ha", { url: ha.url, token: ha.endpoint.token });
-    store.saveDashboard({ id: "guest-dash", answers: {} });
-    store.saveDashboard({ id: "bad-dash", answers: {} });
-    store.saveDashboard({ id: "strategy-dash", answers: {} });
+    store.saveDashboard({ id: "guest-dash", answers: {}, enabled: true });
+    store.saveDashboard({ id: "bad-dash", answers: {}, enabled: true });
+    store.saveDashboard({ id: "strategy-dash", answers: {}, enabled: true });
     for (const u of USERS) await runtime.guests.create(u);
     await runtime.connect();
   }

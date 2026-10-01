@@ -25,6 +25,8 @@ export interface DashboardView {
   id: string;
   title: string;
   status: "loading" | "ok" | "rejected";
+  /** Switched on by the admin; inactive dashboards deny their guests. */
+  enabled: boolean;
   violations: Array<{ rule: string; path: string; message: string }>;
   entities: number;
   guests: number;
@@ -41,6 +43,7 @@ export interface Guest {
   id: string;
   username: string;
   dashboard: string;
+  enabled: boolean;
 }
 
 export interface DiscoveredHa {
@@ -52,7 +55,7 @@ export interface DiscoveredHa {
   reachable: boolean;
 }
 
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -89,13 +92,13 @@ export const api = {
   dashboards: () => request<DashboardsView>("GET", "dashboards"),
   preview: (id: string) => request<DashboardView>("GET", `dashboards/preview/${enc(id)}`),
   addDashboard: (id: string, answers: Record<string, string>) => request<DashboardsView>("POST", "dashboards", { id, answers }),
-  updateDashboard: (id: string, changes: { answers: Record<string, string> }) =>
+  updateDashboard: (id: string, changes: { answers?: Record<string, string>; enabled?: boolean }) =>
     request<DashboardsView>("PATCH", `dashboards/${enc(id)}`, changes),
   removeDashboard: (id: string) => request<DashboardsView>("DELETE", `dashboards/${enc(id)}`),
   guests: () => request<Guest[]>("GET", "guests"),
-  createGuest: (guest: { username: string; password: string; dashboard: string }) =>
+  createGuest: (guest: { username: string; password: string; dashboard: string; enabled?: boolean }) =>
     request<Guest>("POST", "guests", guest),
-  updateGuest: (id: string, changes: { password?: string; dashboard?: string }) =>
+  updateGuest: (id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }) =>
     request<Guest>("PATCH", `guests/${enc(id)}`, changes),
   deleteGuest: (id: string) => request<{ ok: true }>("DELETE", `guests/${enc(id)}`),
   saveSettings: (settings: { public_url: string }) => request<StateView>("PUT", "settings", settings),

@@ -2,7 +2,7 @@ import z from "zod";
 import type { Auth } from "./auth";
 
 /** Same rule as better-auth's username plugin. */
-export const USERNAME_RE = /^[a-zA-Z0-9_.]+$/;
+const USERNAME_RE = /^[a-zA-Z0-9_.]+$/;
 
 export const Username = z
   .string()
@@ -15,6 +15,8 @@ export interface Guest {
   id: string;
   username: string;
   dashboard: string;
+  /** Inactive guests keep their account but cannot use it. */
+  enabled: boolean;
 }
 
 export class GuestError extends Error {}
@@ -26,6 +28,13 @@ interface UserRow {
   username?: string | null;
   displayUsername?: string | null;
   dashboard?: string;
+  enabled?: boolean | number | null;
+}
+
+/** Accounts from before the field existed have no value and count as active. */
+export function isGuestEnabled(user: object): boolean {
+  const enabled = (user as { enabled?: unknown }).enabled;
+  return enabled !== false && enabled !== 0;
 }
 
 function emailFor(username: string): string {
@@ -37,6 +46,7 @@ function toGuest(u: UserRow): Guest {
     id: u.id,
     username: u.displayUsername || u.username || u.name,
     dashboard: u.dashboard ?? "",
+    enabled: isGuestEnabled(u),
   };
 }
 
@@ -65,7 +75,7 @@ export class Guests {
     return user ? toGuest(user) : undefined;
   }
 
-  async create(input: { username: string; password: string; dashboard: string }): Promise<Guest> {
+  async create(input: { username: string; password: string; dashboard: string; enabled?: boolean }): Promise<Guest> {
     const username = Username.parse(input.username);
     const password = Password.parse(input.password);
     const { ctx, adapter } = await this.adapter();
@@ -78,6 +88,7 @@ export class Guests {
         username: username.toLowerCase(),
         displayUsername: username,
         dashboard: input.dashboard,
+        enabled: input.enabled ?? true,
       },
       { method: "admin" },
     );
@@ -90,8 +101,8 @@ export class Guests {
     return toGuest(created as unknown as UserRow);
   }
 
-  /** Returns the updated guest. Password and dashboard changes end the guest's sessions. */
-  async update(id: string, changes: { password?: string; dashboard?: string }): Promise<Guest> {
+  /** Returns the updated guest. Password, dashboard and deactivation end the guest's sessions. */
+  async update(id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }): Promise<Guest> {
     const { ctx, adapter } = await this.adapter();
     const existing = (await adapter.findUserById(id)) as unknown as UserRow | null;
     if (!existing) throw new GuestError("Guest not found");
@@ -100,10 +111,14 @@ export class Guests {
       await adapter.updatePassword(id, await ctx.password.hash(Password.parse(changes.password)));
       endSessions = true;
     }
-    const fields: Record<string, string> = {};
+    const fields: Record<string, string | boolean> = {};
     if (changes.dashboard !== undefined && changes.dashboard !== existing.dashboard) {
       fields.dashboard = changes.dashboard;
       endSessions = true;
+    }
+    if (changes.enabled !== undefined && changes.enabled !== isGuestEnabled(existing)) {
+      fields.enabled = changes.enabled;
+      if (!changes.enabled) endSessions = true;
     }
     if (Object.keys(fields).length > 0) await adapter.updateUser(id, fields);
     if (endSessions) await adapter.deleteUserSessions(id);

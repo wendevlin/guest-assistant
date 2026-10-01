@@ -17,7 +17,7 @@ import { isObj, type Obj } from "./extract";
 
 export type QuestionKind = "navigate_view" | "navigate_outside" | "url" | "media_group";
 
-export const QUESTION_OPTIONS: Record<QuestionKind, { options: readonly string[]; restrictive: string; informational: boolean }> = {
+const QUESTION_OPTIONS: Record<QuestionKind, { options: readonly string[]; restrictive: string; informational: boolean }> = {
   navigate_view: { options: ["ok"], restrictive: "ok", informational: true },
   navigate_outside: { options: ["ok"], restrictive: "ok", informational: true },
   url: { options: ["allow", "block"], restrictive: "block", informational: false },
@@ -49,7 +49,7 @@ export const ACTION_KEYS = new Set([
 /** Media players with MediaPlayerEntityFeature.GROUPING. */
 export const MEDIA_PLAYER_GROUPING = 524288;
 
-export function dashboardPrefix(urlPath: string | null): string {
+function dashboardPrefix(urlPath: string | null): string {
   return `/${urlPath ?? "lovelace"}`;
 }
 

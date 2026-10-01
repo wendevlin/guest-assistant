@@ -56,9 +56,17 @@ export class Dashboard {
    */
   accessChanged = false;
 
+  /** Switched off by the admin: guests are denied, as if the analysis had failed. */
+  enabled = true;
+
   constructor(id: string, answers: Readonly<Record<string, string>> = {}) {
     this.id = id;
     this._answers = answers;
+  }
+
+  /** Guests may use the dashboard: it is switched on and passed the analysis. */
+  get usable(): boolean {
+    return this.enabled && this.status === "ok";
   }
 
   /** The url_path value HA expects (null for the default dashboard). */

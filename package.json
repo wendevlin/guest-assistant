@@ -1,6 +1,6 @@
 {
   "name": "guest-assistant",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "A guest-facing Home Assistant proxy with its own auth, an admin UI, dashboard restriction and default-deny entity filtering",

@@ -8,7 +8,6 @@
   import * as RadioGroup from "$lib/components/ui/radio-group";
   import { api, type DiscoveredHa } from "$lib/api";
   import { message } from "$lib/errors";
-  import { t } from "$lib/i18n";
   import Spinner from "$lib/widgets/Spinner.svelte";
 
   let { oncancel }: { oncancel?: () => void } = $props();
@@ -56,8 +55,8 @@
 
 <Card.Root>
   <Card.Header>
-    <Card.Title class="text-xl">{t("setup.connect.title")}</Card.Title>
-    <Card.Description>{t("setup.connect.intro")}</Card.Description>
+    <Card.Title class="text-xl">Connect Home Assistant</Card.Title>
+    <Card.Description>Pick your Home Assistant. You sign in there as an administrator once. Guest Assistant then creates its own Home Assistant user without admin rights and uses only that one. Your admin login is not stored.</Card.Description>
   </Card.Header>
   <Card.Content>
     <form class="grid gap-6" onsubmit={submit}>
@@ -66,15 +65,15 @@
       {/if}
       <div class="grid gap-3">
         <div class="flex items-center justify-between gap-2">
-          <h3 class="font-medium">{t("setup.connect.found")}</h3>
+          <h3 class="font-medium">Found on the network</h3>
           <Button type="button" variant="ghost" size="sm" onclick={search} disabled={searching}>
-            <RefreshCw class="size-4" />{t("setup.connect.search_again")}
+            <RefreshCw class="size-4" />Search again
           </Button>
         </div>
         {#if searching}
-          <Spinner label={t("setup.connect.searching")} />
+          <Spinner label="Searching the network…" />
         {:else if found.length === 0}
-          <p class="text-sm text-muted-foreground">{t("setup.connect.none")}</p>
+          <p class="text-sm text-muted-foreground">No Home Assistant found on the network. Enter its address below.</p>
         {:else}
           <RadioGroup.Root value={typed.trim() ? "" : picked} onValueChange={(v) => ((picked = v), (typed = ""))} class="grid gap-2">
             {#each found as ha (ha.uuid)}
@@ -88,7 +87,7 @@
                 <span class="grid gap-0.5">
                   <span class="font-medium">{ha.name}</span>
                   <span class="text-sm text-muted-foreground">{ha.url}{ha.version ? ` · ${ha.version}` : ""}</span>
-                  {#if !ha.reachable}<span class="text-xs">{t("setup.connect.unreachable")}</span>{/if}
+                  {#if !ha.reachable}<span class="text-xs">Not reachable from Guest Assistant under any announced address.</span>{/if}
                 </span>
               </Label>
             {/each}
@@ -96,12 +95,12 @@
         {/if}
       </div>
       <div class="grid gap-2">
-        <Label for="ha-url">{t("setup.connect.manual")}</Label>
-        <Input id="ha-url" bind:value={typed} inputmode="url" placeholder={t("setup.connect.url_hint")} />
+        <Label for="ha-url">Or enter the address</Label>
+        <Input id="ha-url" bind:value={typed} inputmode="url" placeholder="For example http://homeassistant.local:8123" />
       </div>
       <div class="flex flex-wrap gap-2">
-        <Button type="submit" disabled={busy || !target}>{t("setup.connect.submit")}</Button>
-        {#if oncancel}<Button type="button" variant="outline" onclick={oncancel}>{t("cancel")}</Button>{/if}
+        <Button type="submit" disabled={busy || !target}>Sign in with Home Assistant</Button>
+        {#if oncancel}<Button type="button" variant="outline" onclick={oncancel}>Cancel</Button>{/if}
       </div>
     </form>
   </Card.Content>

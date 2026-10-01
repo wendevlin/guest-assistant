@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
  * via `disabledPaths`. The guest frontend uses sign-in/username, get-session
  * and sign-out. Keep this list in sync with the test in test/auth.test.ts.
  */
-export const ENABLED_AUTH_PATHS = ["/sign-in/username", "/sign-out", "/get-session", "/ok", "/error"];
+const ENABLED_AUTH_PATHS = ["/sign-in/username", "/sign-out", "/get-session", "/ok", "/error"];
 
 const ALL_KNOWN_AUTH_PATHS = [
   "/account-info",
@@ -45,6 +45,8 @@ export interface AuthOptions {
   publicUrl?: string;
   /** Guest port, for the fallback base URL. */
   port: number;
+  /** Signs session cookies. Generated once and kept in the database. */
+  secret: string;
 }
 
 /**
@@ -64,11 +66,12 @@ function trustedOriginsFor(publicUrl: string | undefined) {
   };
 }
 
-export function createAuth({ db, publicUrl, port }: AuthOptions) {
+export function createAuth({ db, publicUrl, port, secret }: AuthOptions) {
   const baseURL = new URL(publicUrl ?? `http://localhost:${port}`);
   const secure = baseURL.protocol === "https:";
 
   return betterAuth({
+    secret,
     baseURL: baseURL.origin,
     trustedOrigins: trustedOriginsFor(publicUrl),
     database: db,
@@ -105,6 +108,12 @@ export function createAuth({ db, publicUrl, port }: AuthOptions) {
           type: "string",
           required: true,
           // Never settable through any client-facing endpoint.
+          input: false,
+        },
+        enabled: {
+          type: "boolean",
+          required: false,
+          defaultValue: true,
           input: false,
         },
       },

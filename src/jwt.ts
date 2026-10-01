@@ -10,6 +10,13 @@ const JWT_SECRET = randomBytes(32);
 /** Lifetime of a hass-token in seconds. */
 export const JWT_TTL_SECONDS = 15 * 60;
 
+/**
+ * Tokens of a user issued before this time (ms) are refused. Set when the
+ * guest is deleted or changed, so a token they still hold does not outlive
+ * the change. Per process, like the secret.
+ */
+const revokedBefore = new Map<string, number>();
+
 export interface GuestTokenPayload {
   /** better-auth user id */
   sub: string;
@@ -17,6 +24,8 @@ export interface GuestTokenPayload {
   sid: string;
   /** dashboard id the user is bound to */
   dashboard: string;
+  /** issued at, in milliseconds (internal token, not exchanged with HA) */
+  iat: number;
   exp: number;
 }
 
@@ -31,6 +40,11 @@ export function signJWT(payload: GuestTokenPayload): string {
     .update(`${header}.${body}`)
     .digest();
   return `${header}.${body}.${base64url(sig)}`;
+}
+
+/** Refuses every token of the user issued up to now. */
+export function revokeTokens(userId: string): void {
+  revokedBefore.set(userId, Date.now());
 }
 
 export function verifyJWT(token: string): GuestTokenPayload | null {
@@ -55,11 +69,14 @@ export function verifyJWT(token: string): GuestTokenPayload | null {
       typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
       typeof payload.dashboard !== "string" ||
+      typeof payload.iat !== "number" ||
       typeof payload.exp !== "number"
     ) {
       return null;
     }
     if (Date.now() / 1000 > payload.exp) return null;
+    const revokedAt = revokedBefore.get(payload.sub);
+    if (revokedAt !== undefined && payload.iat <= revokedAt) return null;
     return payload as GuestTokenPayload;
   } catch {
     return null;

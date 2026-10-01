@@ -30,9 +30,13 @@ describe("evaluate: default deny", () => {
     expectReject({ type: "execute_script", sequence: [] });
     expectReject({ type: "subscribe_trigger", trigger: {} });
     expectReject({ type: "search/related", item_type: "entity", item_id: "light.bedroom" });
-    expectReject({ type: "config/entity_registry/list" });
+    expectReject({ type: "config/entity_registry/update", entity_id: "light.kitchen", name: "x" });
     expectReject({ type: "tag/list" });
     expectReject({ type: "media_source/browse_media" });
+  });
+
+  test("the entity registry list is filtered to the dashboard", () => {
+    expect(run({ type: "config/entity_registry/list" }).kind).toBe("forward");
   });
 
   test("unknown fields are rejected even on allowed commands", () => {

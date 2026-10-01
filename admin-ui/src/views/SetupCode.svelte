@@ -6,7 +6,6 @@
   import { Label } from "$lib/components/ui/label";
   import { api } from "$lib/api";
   import { message } from "$lib/errors";
-  import { t } from "$lib/i18n";
 
   let { ondone }: { ondone: () => void } = $props();
   let code = $state("");
@@ -30,8 +29,8 @@
 
 <Card.Root>
   <Card.Header>
-    <Card.Title class="text-xl">{t("setup.code.title")}</Card.Title>
-    <Card.Description>{t("setup.code.intro")}</Card.Description>
+    <Card.Title class="text-xl">Set up Guest Assistant</Card.Title>
+    <Card.Description>To make sure you are the one setting up this proxy, enter the setup code. It is printed in the log of Guest Assistant.</Card.Description>
   </Card.Header>
   <Card.Content>
     <form class="grid gap-4" onsubmit={submit}>
@@ -39,10 +38,10 @@
         <Alert.Root variant="destructive"><Alert.Description>{error}</Alert.Description></Alert.Root>
       {/if}
       <div class="grid gap-2">
-        <Label for="setup-code">{t("setup.code.label")}</Label>
+        <Label for="setup-code">Setup code</Label>
         <Input id="setup-code" bind:value={code} autocomplete="one-time-code" inputmode="numeric" placeholder="1234-5678" required />
       </div>
-      <div><Button type="submit" disabled={busy}>{t("setup.code.submit")}</Button></div>
+      <div><Button type="submit" disabled={busy}>Continue</Button></div>
     </form>
   </Card.Content>
 </Card.Root>

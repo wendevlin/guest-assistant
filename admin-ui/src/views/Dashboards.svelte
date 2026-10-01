@@ -6,9 +6,9 @@
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
   import { Separator } from "$lib/components/ui/separator";
+  import { Switch } from "$lib/components/ui/switch";
   import { api, type DashboardsView, type DashboardView, type QuestionView } from "$lib/api";
   import { message } from "$lib/errors";
-  import { t } from "$lib/i18n";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
   import AddDashboard from "./AddDashboard.svelte";
@@ -46,7 +46,7 @@
   }
 
   /** Changes take effect immediately; a short "Saved" confirms it. */
-  async function save(id: string, changes: { answers: Record<string, string> }) {
+  async function save(id: string, changes: { answers?: Record<string, string>; enabled?: boolean }) {
     if (!(await run(() => api.updateDashboard(id, changes)))) return;
     saved = id;
     clearTimeout(savedTimer);
@@ -75,71 +75,78 @@
 {:else}
   <div class="grid gap-4">
     <div class="flex flex-wrap items-center justify-between gap-4">
-      <p class="max-w-2xl text-sm text-muted-foreground">{t("dash.intro")}</p>
-      {#if !adding}
-        <Button onclick={() => (adding = true)}><Plus class="size-4" />{t("dash.add")}</Button>
-      {/if}
+      <p class="max-w-2xl text-sm text-muted-foreground">
+        A guest dashboard is a permission: guests see and control exactly the entities on it. Dashboards with cards that cannot be analysed
+        are rejected.
+      </p>
+      <Button onclick={() => (adding = true)}><Plus class="size-4" />Add dashboard</Button>
     </div>
 
     {#if error}
       <Alert.Root variant="destructive"><Alert.Description>{error}</Alert.Description></Alert.Root>
     {/if}
 
-    {#if adding}
-      <AddDashboard
-        available={data.available}
-        onadded={(result, id) => {
-          data = result;
-          adding = false;
-          open = id;
-        }}
-        oncancel={() => (adding = false)}
-        onerror={(m) => (error = m)}
-      />
-    {/if}
-
-    {#if data.configured.length === 0 && !adding}
-      <p class="text-sm text-muted-foreground">{t("dash.empty")}</p>
+    {#if data.configured.length === 0}
+      <p class="text-sm text-muted-foreground">No guest dashboards yet.</p>
     {/if}
 
     {#each data.configured as d (d.id)}
       {@const isOpen = open === d.id}
       <Card.Root class="gap-0 py-0">
-        <button
-          type="button"
-          class="flex w-full flex-wrap items-center gap-3 px-5 py-4 text-left sm:flex-nowrap"
-          aria-expanded={isOpen}
-          onclick={() => (open = isOpen ? null : d.id)}
-        >
-          <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen ? 'rotate-90' : ''}" />
-          <span class="grid min-w-0 flex-1">
-            <span class="truncate font-medium">{d.title}</span>
-            <span class="truncate text-sm text-muted-foreground">/{d.id}</span>
-          </span>
-          {#if saved === d.id}
-            <span class="flex items-center gap-1 text-sm text-success" role="status"><Check class="size-4" />{t("saved")}</span>
-          {/if}
-          <span class="w-full ps-7 sm:w-auto sm:ps-0"><StatusBadges dashboard={d} /></span>
-        </button>
+        <div class="flex items-center gap-3 pe-5">
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 flex-wrap items-center gap-3 py-4 ps-5 text-left sm:flex-nowrap"
+            aria-expanded={isOpen}
+            onclick={() => (open = isOpen ? null : d.id)}
+          >
+            <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen ? 'rotate-90' : ''}" />
+            <span class="grid min-w-0 flex-1">
+              <span class="truncate font-medium">{d.title}</span>
+              <span class="truncate text-sm text-muted-foreground">/{d.id}</span>
+            </span>
+            {#if saved === d.id}
+              <span class="flex items-center gap-1 text-sm text-success" role="status"><Check class="size-4" />Saved</span>
+            {/if}
+            <span class="w-full ps-7 sm:w-auto sm:ps-0"><StatusBadges dashboard={d} /></span>
+          </button>
+          <Switch
+            checked={d.enabled}
+            onCheckedChange={(enabled) => save(d.id, { enabled })}
+            aria-label="Active"
+            title={d.enabled ? "Active: guests can use it" : "Inactive: guests cannot use it"}
+          />
+        </div>
         {#if isOpen}
           <Separator />
           <div class="grid gap-6 px-5 py-5">
             <Analysis dashboard={d} onanswer={(q, value) => answer(d, q, value)} />
             <Separator />
             <div>
-              <Button variant="ghost" class="text-destructive hover:text-destructive" onclick={() => ((removing = d), (confirmOpen = true))}>{t("dash.remove")}</Button>
+              <Button variant="ghost" class="text-destructive hover:text-destructive" onclick={() => ((removing = d), (confirmOpen = true))}
+                >Remove dashboard</Button
+              >
             </div>
           </div>
         {/if}
       </Card.Root>
     {/each}
   </div>
+
+  <AddDashboard
+    bind:open={adding}
+    available={data.available}
+    onadded={(result, id) => {
+      data = result;
+      open = id;
+    }}
+  />
 {/if}
 
 <ConfirmDialog
   bind:open={confirmOpen}
-  title={removing ? t("dash.remove_confirm", { name: removing.title, count: removing.guests }) : ""}
-  action={t("dash.remove")}
+  title={removing ? `Remove ${removing.title}? Its ${removing.guests} guest accounts are deleted as well.` : ""}
+  action="Remove dashboard"
   onconfirm={() => {
     const d = removing;
     removing = null;

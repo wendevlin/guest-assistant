@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /** Answers of the admin to the questions a dashboard analysis raised (question key → option). */
@@ -9,6 +9,8 @@ export interface DashboardRecord {
   /** url_path of the HA dashboard; "lovelace" is the default dashboard. */
   id: string;
   answers: Answers;
+  /** Inactive dashboards keep their settings and guests, but nobody can use them. */
+  enabled: boolean;
 }
 
 /** How the proxy reaches HA for guest traffic. */
@@ -26,8 +28,8 @@ interface Settings {
   ha: HaSettings;
   /** URL guests use to reach the proxy (secure cookies, links in notifications). */
   public_url: string;
-  /** Set once config.yaml was imported, so it is never imported again. */
-  legacy_imported: true;
+  /** Signs better-auth's session cookies; generated on the first start. */
+  auth_secret: string;
 }
 
 /**
@@ -43,13 +45,25 @@ export class Store {
     this.db.exec("CREATE TABLE IF NOT EXISTS ga_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     this.db.exec(
       // (older databases also have a now unused `theme` column)
-      "CREATE TABLE IF NOT EXISTS ga_dashboards (id TEXT PRIMARY KEY, answers TEXT NOT NULL DEFAULT '{}', added_at TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS ga_dashboards (id TEXT PRIMARY KEY, answers TEXT NOT NULL DEFAULT '{}', added_at TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1)",
     );
+    const columns = this.db.query<{ name: string }, []>("PRAGMA table_info(ga_dashboards)").all();
+    if (!columns.some((c) => c.name === "enabled")) this.db.exec("ALTER TABLE ga_dashboards ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
   }
 
   static open(dataDir: string): Store {
-    mkdirSync(dataDir, { recursive: true });
-    return new Store(join(dataDir, "guest-assistant.db"));
+    // The database holds the HA token, session tokens and password hashes.
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const path = join(dataDir, "guest-assistant.db");
+    const store = new Store(path);
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        chmodSync(path + suffix, 0o600);
+      } catch {
+        // The WAL files appear with the first write; the directory mode covers them.
+      }
+    }
+    return store;
   }
 
   static memory(): Store {
@@ -73,22 +87,22 @@ export class Store {
 
   listDashboards(): DashboardRecord[] {
     return this.db
-      .query<{ id: string; answers: string }, []>("SELECT id, answers FROM ga_dashboards ORDER BY added_at, id")
+      .query<DashboardRow, []>("SELECT id, answers, enabled FROM ga_dashboards ORDER BY added_at, id")
       .all()
       .map(toRecord);
   }
 
   getDashboard(id: string): DashboardRecord | undefined {
-    const row = this.db.query<{ id: string; answers: string }, [string]>("SELECT id, answers FROM ga_dashboards WHERE id = ?").get(id);
+    const row = this.db.query<DashboardRow, [string]>("SELECT id, answers, enabled FROM ga_dashboards WHERE id = ?").get(id);
     return row ? toRecord(row) : undefined;
   }
 
   saveDashboard(record: DashboardRecord): void {
     this.db
       .query(
-        "INSERT INTO ga_dashboards (id, answers, added_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET answers = excluded.answers",
+        "INSERT INTO ga_dashboards (id, answers, added_at, enabled) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET answers = excluded.answers, enabled = excluded.enabled",
       )
-      .run(record.id, JSON.stringify(record.answers), new Date().toISOString());
+      .run(record.id, JSON.stringify(record.answers), new Date().toISOString(), record.enabled ? 1 : 0);
   }
 
   deleteDashboard(id: string): void {
@@ -96,7 +110,13 @@ export class Store {
   }
 }
 
-function toRecord(row: { id: string; answers: string }): DashboardRecord {
+interface DashboardRow {
+  id: string;
+  answers: string;
+  enabled: number;
+}
+
+function toRecord(row: DashboardRow): DashboardRecord {
   let answers: Answers = {};
   try {
     const parsed = JSON.parse(row.answers);
@@ -106,5 +126,5 @@ function toRecord(row: { id: string; answers: string }): DashboardRecord {
   } catch {
     // corrupt answers count as unanswered, which is the restrictive choice
   }
-  return { id: row.id, answers };
+  return { id: row.id, answers, enabled: row.enabled !== 0 };
 }

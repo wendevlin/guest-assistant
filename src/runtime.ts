@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createAuth, type Auth } from "./auth";
 import { migrate } from "./auth/migrate";
 import { Dashboard } from "./dashboard";
@@ -31,6 +32,8 @@ const RETRY_MS = 30_000;
  * the server runs (admin UI); listeners let the proxy drop connections that
  * lost their permission.
  */
+const RELOAD_RETRY_MS = 15_000;
+
 export class Runtime {
   readonly dashboards = new Map<string, Dashboard>();
   readonly guests: Guests;
@@ -76,7 +79,14 @@ export class Runtime {
   }
 
   private buildAuth(): Auth {
-    return createAuth({ db: this.store.db, publicUrl: this.publicUrl, port: this.env.port });
+    // Without an own secret better-auth would sign cookies with its
+    // well-known default.
+    let secret = this.store.get("auth_secret");
+    if (!secret) {
+      secret = randomBytes(32).toString("base64url");
+      this.store.set("auth_secret", secret);
+    }
+    return createAuth({ db: this.store.db, publicUrl: this.publicUrl, port: this.env.port, secret });
   }
 
   async init(): Promise<void> {
@@ -207,6 +217,7 @@ export class Runtime {
     }
     for (const record of records) {
       const dashboard = this.dashboards.get(record.id) ?? this.track(new Dashboard(record.id, record.answers));
+      dashboard.enabled = record.enabled;
       await this.loadDashboard(dashboard);
     }
   }
@@ -225,7 +236,14 @@ export class Runtime {
     try {
       await dashboard.load(this.client);
     } catch (err) {
+      // A failed reload must not leave the previous allowlist in force:
+      // deny until a retry succeeds.
       console.error(`Failed to load dashboard "${dashboard.id}":`, err);
+      dashboard.markLoading();
+      this.emit("dashboardChanged", dashboard);
+      setTimeout(() => {
+        if (this.dashboards.get(dashboard.id) === dashboard && dashboard.status === "loading") void this.loadDashboard(dashboard);
+      }, RELOAD_RETRY_MS);
     }
   }
 
@@ -255,18 +273,23 @@ export class Runtime {
     const available = await this.listHaDashboards();
     if (!available.some((d) => d.id === id)) throw new RuntimeError(`Dashboard "${id}" does not exist in Home Assistant`);
     if (this.dashboards.has(id)) throw new RuntimeError(`Dashboard "${id}" is already a guest dashboard`);
-    this.store.saveDashboard({ id, answers });
+    this.store.saveDashboard({ id, answers, enabled: true });
     const dashboard = this.track(new Dashboard(id, answers));
     await this.loadDashboard(dashboard);
     return dashboard;
   }
 
-  async updateDashboard(id: string, changes: { answers: Record<string, string> }): Promise<void> {
+  async updateDashboard(id: string, changes: { answers?: Record<string, string>; enabled?: boolean }): Promise<void> {
     const record = this.store.getDashboard(id);
     const dashboard = this.dashboards.get(id);
     if (!record || !dashboard) throw new RuntimeError(`Dashboard "${id}" is not a guest dashboard`);
-    this.store.saveDashboard({ ...record, answers: changes.answers });
-    dashboard.setAnswers(changes.answers);
+    this.store.saveDashboard({ ...record, ...changes });
+    if (changes.enabled !== undefined && changes.enabled !== dashboard.enabled) {
+      dashboard.enabled = changes.enabled;
+      // Switching off drops open guest connections (see WsProxy.dashboardChanged).
+      this.emit("dashboardChanged", dashboard);
+    }
+    if (changes.answers) dashboard.setAnswers(changes.answers);
   }
 
   /** Removes a guest dashboard together with its guests. */
@@ -282,12 +305,12 @@ export class Runtime {
 
   // ── guests ──────────────────────────────────────────────────────────────
 
-  async createGuest(input: { username: string; password: string; dashboard: string }) {
+  async createGuest(input: { username: string; password: string; dashboard: string; enabled?: boolean }) {
     if (!this.store.getDashboard(input.dashboard)) throw new RuntimeError(`Dashboard "${input.dashboard}" is not a guest dashboard`);
     return this.guests.create(input);
   }
 
-  async updateGuest(id: string, changes: { password?: string; dashboard?: string }) {
+  async updateGuest(id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }) {
     if (changes.dashboard !== undefined && !this.store.getDashboard(changes.dashboard)) {
       throw new RuntimeError(`Dashboard "${changes.dashboard}" is not a guest dashboard`);
     }

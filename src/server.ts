@@ -4,6 +4,7 @@ import { createAdmin } from "./admin/routes";
 import type { AdminSessions } from "./admin/sessions";
 import { createGuard } from "./auth/guard";
 import { createHassTokenHandler } from "./auth/hass-token";
+import { revokeTokens } from "./jwt";
 import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
 import type { Runtime } from "./runtime";
@@ -18,7 +19,7 @@ export const ADMIN_BASE = "/admin/";
  * the TCP peer so clients cannot spoof it. Behind a reverse proxy this is the
  * proxy's address, i.e. one shared bucket; the limits are sized for that.
  */
-export const CLIENT_IP_HEADER = "x-guest-assistant-client-ip";
+const CLIENT_IP_HEADER = "x-guest-assistant-client-ip";
 
 function withClientIp(req: Request, server: Server<ConnState>): Request {
   const headers = new Headers(req.headers);
@@ -29,6 +30,8 @@ function withClientIp(req: Request, server: Server<ConnState>): Request {
 }
 
 /** The server guests connect to. Standalone, it also serves the admin page under /admin/. */
+const MAX_BODY_BYTES = 1024 * 1024;
+
 export function createServer(runtime: Runtime, sessions: AdminSessions, port: number = runtime.env.port) {
   const requireGuest = createGuard(runtime);
   const endpoint = () => runtime.endpoint;
@@ -42,7 +45,7 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
   runtime.on("dashboardChanged", (d) => wsProxy.dashboardChanged(d));
   runtime.on("dashboardRemoved", (id) => wsProxy.closeForDashboard(id));
   runtime.on("guestChanged", (id) => {
-    requireGuest.invalidate();
+    revokeTokens(id);
     wsProxy.closeForUser(id);
   });
   runtime.on("connectionChanged", () => wsProxy.closeAll());
@@ -99,6 +102,8 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
 
   const server = Bun.serve({
     port,
+    // Request bodies are small JSON (sign-in, admin API).
+    maxRequestBodySize: MAX_BODY_BYTES,
     routes: {
       "/api/auth/hass-token": { GET: hassToken },
       "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => runtime.auth.handler(withClientIp(req, server)),
@@ -130,5 +135,5 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
 /** As an app, the admin page is served on the ingress port only. */
 export function createIngressServer(runtime: Runtime, sessions: AdminSessions, port: number = runtime.env.ingressPort) {
   const admin = createAdmin(runtime, sessions, { base: "/" });
-  return Bun.serve({ port, fetch: (req, server) => admin(req, server) });
+  return Bun.serve({ port, maxRequestBodySize: MAX_BODY_BYTES, fetch: (req, server) => admin(req, server) });
 }

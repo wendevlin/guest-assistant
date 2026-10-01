@@ -5,7 +5,6 @@
   import { Input } from "$lib/components/ui/input";
   import { api, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
-  import { t, type Key } from "$lib/i18n";
   import Connect from "./Connect.svelte";
 
   let { info, onstate }: { info: StateView; onstate: (s: StateView) => void } = $props();
@@ -16,6 +15,7 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
 
+  const CONNECTION_LABELS = { connected: "Connected", connecting: "Connecting", error: "Not connected", unconfigured: "Not set up" } as const;
   const guestLink = $derived(info.public_url ?? (info.mode === "standalone" ? window.location.origin : null));
 
   async function savePublicUrl(e: SubmitEvent) {
@@ -51,20 +51,20 @@
       <Alert.Root variant="destructive"><Alert.Description>{error}</Alert.Description></Alert.Root>
     {/if}
     <Card.Root>
-      <Card.Header><Card.Title class="text-lg">{t("settings.ha")}</Card.Title></Card.Header>
+      <Card.Header><Card.Title class="text-lg">Home Assistant</Card.Title></Card.Header>
       <Card.Content class="grid gap-4">
         {#if info.ha}
           <dl class="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
-            <dt class="text-muted-foreground">{t("settings.url")}</dt>
+            <dt class="text-muted-foreground">Address</dt>
             <dd class="break-all">{info.ha.url}</dd>
-            <dt class="text-muted-foreground">{t("settings.state")}</dt>
-            <dd>{t(`conn.${info.ha.state}` as Key)}</dd>
+            <dt class="text-muted-foreground">Status</dt>
+            <dd>{CONNECTION_LABELS[info.ha.state]}</dd>
             {#if info.ha.version}
-              <dt class="text-muted-foreground">{t("settings.version")}</dt>
+              <dt class="text-muted-foreground">Version</dt>
               <dd>{info.ha.version}</dd>
             {/if}
             {#if info.ha.configured_by}
-              <dt class="text-muted-foreground">{t("settings.configured_by")}</dt>
+              <dt class="text-muted-foreground">Set up by</dt>
               <dd class="break-all">{info.ha.configured_by}</dd>
             {/if}
           </dl>
@@ -75,19 +75,19 @@
       </Card.Content>
       <Card.Footer class="grid justify-items-start gap-2">
         {#if info.mode === "app"}
-          <p class="text-sm text-muted-foreground">{t("settings.renew_hint")}</p>
-          <Button variant="outline" onclick={renew} disabled={busy}>{t("settings.renew")}</Button>
+          <p class="text-sm text-muted-foreground">Creates a new non-admin user for Guest Assistant in Home Assistant and removes the old one.</p>
+          <Button variant="outline" onclick={renew} disabled={busy}>Recreate the Guest Assistant user</Button>
         {:else}
-          <p class="text-sm text-muted-foreground">{t("settings.reconnect_hint")}</p>
-          <Button variant="outline" onclick={() => (reconnect = true)}>{t("settings.reconnect")}</Button>
+          <p class="text-sm text-muted-foreground">Or the same one again, to create a new Guest Assistant user there.</p>
+          <Button variant="outline" onclick={() => (reconnect = true)}>Connect a different Home Assistant</Button>
         {/if}
       </Card.Footer>
     </Card.Root>
 
     <Card.Root>
       <Card.Header>
-        <Card.Title class="text-lg">{t("settings.public_url")}</Card.Title>
-        <Card.Description>{t("settings.public_url_hint")}</Card.Description>
+        <Card.Title class="text-lg">Guest address</Card.Title>
+        <Card.Description>The address guests open, e.g. https://guests.example.com. With https, cookies are marked secure. Optional.</Card.Description>
       </Card.Header>
       <Card.Content>
         <form id="settings-form" class="grid gap-3" onsubmit={savePublicUrl}>
@@ -99,14 +99,14 @@
           />
           {#if guestLink}
             <p class="text-sm text-muted-foreground">
-              {t("settings.guest_link")}: <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{guestLink}</code>
+              Guests open: <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{guestLink}</code>
             </p>
           {/if}
         </form>
       </Card.Content>
       <Card.Footer class="flex items-center gap-3">
-        <Button type="submit" form="settings-form" variant="outline" disabled={publicUrl === null}>{t("save")}</Button>
-        {#if saved}<span class="text-sm text-muted-foreground">{t("saved")}</span>{/if}
+        <Button type="submit" form="settings-form" variant="outline" disabled={publicUrl === null}>Save</Button>
+        {#if saved}<span class="text-sm text-muted-foreground">Saved</span>{/if}
       </Card.Footer>
     </Card.Root>
   </div>

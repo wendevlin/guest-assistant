@@ -3,7 +3,7 @@ import { HaClient } from "./client";
 import { passwordLogin, revokeRefreshToken } from "./oauth";
 
 /** Display name of the HA user the proxy creates for itself. */
-export const PROXY_USER_NAME = "Guest Assistant";
+const PROXY_USER_NAME = "Guest Assistant";
 const USERNAME_BASE = "guest-assistant";
 /** Any client id works for HA's password login as long as the redirect URI shares its host. */
 const LOGIN_CLIENT_ID = "http://guest-assistant.local/";

@@ -1,7 +1,6 @@
 <!-- Why a dashboard is rejected, or the questions it raises. -->
 <script lang="ts">
   import type { DashboardView, QuestionView } from "$lib/api";
-  import { t } from "$lib/i18n";
   import Questions from "./Questions.svelte";
 
   let { dashboard, onanswer }: { dashboard: DashboardView; onanswer: (q: QuestionView, value: string) => void } = $props();
@@ -10,8 +9,8 @@
 {#if dashboard.status === "rejected"}
   <section class="grid gap-3">
     <div>
-      <h3 class="font-medium">{t("dash.violations")}</h3>
-      <p class="text-sm text-muted-foreground">{t("dash.violations_hint")}</p>
+      <h3 class="font-medium">Why it is rejected</h3>
+      <p class="text-sm text-muted-foreground">Guests of this dashboard cannot sign in until these cards are changed in Home Assistant.</p>
     </div>
     <ul class="grid gap-2">
       {#each dashboard.violations as v, i (i)}
@@ -25,9 +24,9 @@
 {:else}
   <section class="grid gap-3">
     <div>
-      <h3 class="font-medium">{t("dash.questions")}</h3>
+      <h3 class="font-medium">Your decisions</h3>
       {#if dashboard.questions.some((q) => !q.informational)}
-        <p class="text-sm text-muted-foreground">{t("dash.questions_hint")}</p>
+        <p class="text-sm text-muted-foreground">Until you decide, the restrictive choice applies.</p>
       {/if}
     </div>
     <Questions questions={dashboard.questions} {onanswer} />

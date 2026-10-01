@@ -1,5 +1,4 @@
 <script lang="ts">
-  import House from "@lucide/svelte/icons/house";
   import LogOut from "@lucide/svelte/icons/log-out";
   import * as Alert from "$lib/components/ui/alert";
   import { Badge } from "$lib/components/ui/badge";
@@ -8,8 +7,6 @@
   import * as Tabs from "$lib/components/ui/tabs";
   import { api, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
-  import * as Select from "$lib/components/ui/select";
-  import { language, LANGUAGES, setLanguage, t, type Key, type Language } from "$lib/i18n";
   import Spinner from "$lib/widgets/Spinner.svelte";
   import Connect from "./views/Connect.svelte";
   import Dashboards from "./views/Dashboards.svelte";
@@ -20,6 +17,8 @@
 
   type Tab = "dashboards" | "guests" | "settings";
   const TABS: Tab[] = ["dashboards", "guests", "settings"];
+  const TAB_LABELS: Record<Tab, string> = { dashboards: "Dashboards", guests: "Guests", settings: "Settings" };
+  const CONNECTION_LABELS = { connected: "Connected", connecting: "Connecting", error: "Not connected", unconfigured: "Not set up" } as const;
 
   let info = $state<StateView | null>(null);
   let tab = $state<Tab>(TABS.includes(location.hash.slice(1) as Tab) ? (location.hash.slice(1) as Tab) : "dashboards");
@@ -69,32 +68,19 @@
 <div class="min-h-screen">
   <header class="border-b bg-card">
     <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 py-3">
-      <div class="flex min-w-0 flex-1 items-center gap-3">
-        <div class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground"><House class="size-5" /></div>
-        <h1 class="truncate text-lg font-medium">
-          {t("title")} <span class="font-normal text-muted-foreground">{t("subtitle")}</span>
-        </h1>
-      </div>
+      <h1 class="min-w-0 flex-1 truncate text-lg font-medium">
+        Guest Assistant <span class="font-normal text-muted-foreground">Admin</span>
+      </h1>
       {#if info?.configured && signedIn}
         <Badge variant={connection === "connected" ? "success" : connection === "error" ? "destructive" : "warning"} title={info.ha?.error ?? ""}>
-          {t(`conn.${connection}` as Key)}
+          {CONNECTION_LABELS[connection]}
         </Badge>
       {/if}
-      <Select.Root type="single" value={language} onValueChange={(v) => v !== language && setLanguage(v as Language)}>
-        <Select.Trigger size="sm" aria-label={t("language")} class="w-auto">
-          {LANGUAGES.find((l) => l.code === language)?.name}
-        </Select.Trigger>
-        <Select.Content>
-          {#each LANGUAGES as l (l.code)}
-            <Select.Item value={l.code} label={l.name} />
-          {/each}
-        </Select.Content>
-      </Select.Root>
       {#if signedIn && info}
         <div class="flex items-center gap-1">
-          <span class="text-sm text-muted-foreground">{t("signed_in_as", { name: info.admin_name ?? "" })}</span>
+          <span class="text-sm text-muted-foreground">Signed in as {info.admin_name ?? ""}</span>
           {#if info.mode === "standalone"}
-            <Button variant="ghost" size="sm" onclick={logout}><LogOut class="size-4" />{t("logout")}</Button>
+            <Button variant="ghost" size="sm" onclick={logout}><LogOut class="size-4" />Sign out</Button>
           {/if}
         </div>
       {/if}
@@ -112,8 +98,8 @@
       {#if info.mode === "app"}
         <Card.Root>
           <Card.Header>
-            <Card.Title class="text-xl">{t("setup.app.title")}</Card.Title>
-            <Card.Description>{t("setup.app.intro")}</Card.Description>
+            <Card.Title class="text-xl">Setting up</Card.Title>
+            <Card.Description>Guest Assistant is creating its own Home Assistant user.</Card.Description>
           </Card.Header>
           <Card.Content><Spinner /></Card.Content>
         </Card.Root>
@@ -124,7 +110,7 @@
       {/if}
     {:else if !signedIn}
       {#if info.mode === "app"}
-        <Alert.Root variant="destructive"><Alert.Description>{t("login.not_admin")}</Alert.Description></Alert.Root>
+        <Alert.Root variant="destructive"><Alert.Description>Only Home Assistant administrators can open this page.</Alert.Description></Alert.Root>
       {:else}
         <Login />
       {/if}
@@ -132,7 +118,7 @@
       <Tabs.Root bind:value={tab} class="gap-4">
         <Tabs.List>
           {#each TABS as name (name)}
-            <Tabs.Trigger value={name}>{t(`tabs.${name}`)}</Tabs.Trigger>
+            <Tabs.Trigger value={name}>{TAB_LABELS[name]}</Tabs.Trigger>
           {/each}
         </Tabs.List>
         <!-- Each view is created when its tab opens, so it loads current data

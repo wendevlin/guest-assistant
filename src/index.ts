@@ -4,14 +4,12 @@ import { ingressPanelPath } from "./ha/supervisor";
 import { Runtime } from "./runtime";
 import { ADMIN_BASE, createIngressServer, createServer } from "./server";
 import { connectAsApp } from "./setup/connect";
-import { importLegacyConfig } from "./setup/legacy-import";
 import { Store } from "./store";
 
 const env = readEnv();
 const store = Store.open(env.dataDir);
 const runtime = new Runtime(env, store, env.supervisorToken ? "app" : "standalone");
 await runtime.init();
-await importLegacyConfig(runtime, env.legacyConfigPath);
 
 const sessions = new AdminSessions();
 const { server } = createServer(runtime, sessions);

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { AdminSessions } from "../src/admin/sessions";
 import { Runtime } from "../src/runtime";
 import { createIngressServer } from "../src/server";
-import { importLegacyConfig } from "../src/setup/legacy-import";
 import { Store } from "../src/store";
 import { GuestWs, randomPort, startTestEnv, testEnvConfig, type TestEnv } from "./helpers";
 import { ADMIN_TOKEN, MOCK_TOKEN, USER_TOKEN, startMockHA } from "./mock-ha";
@@ -350,7 +349,7 @@ describe("admin decisions on a dashboard", () => {
 
     const moved = await a.call("PATCH", `guests/${links.id}`, { dashboard: "guest-dash" });
     expect(moved.status).toBe(200);
-    expect(moved.body).toEqual({ id: links.id, username: "links", dashboard: "guest-dash" });
+    expect(moved.body).toEqual({ id: links.id, username: "links", dashboard: "guest-dash", enabled: true });
     // there are no look settings
     expect((await a.call("PATCH", `guests/${links.id}`, { theme: { mode: "dark" } })).status).toBe(400);
     await ws.closed;
@@ -424,42 +423,60 @@ describe("running as an app", () => {
   });
 });
 
-describe("config.yaml import", () => {
-  test("imports connection, dashboards and guests once", async () => {
-    const ha = startMockHA();
-    const dir = mkdtempSync(join(tmpdir(), "ga-import-"));
-    const path = join(dir, "config.yaml");
-    writeFileSync(
-      path,
-      [
-        "home-assistant:",
-        "  host: localhost",
-        `  port: ${ha.port}`,
-        `  long_lived_access_token: ${MOCK_TOKEN}`,
-        "base_url: https://guests.example.com",
-        "dashboards:",
-        "  - id: guest-dash",
-        "    theme: { mode: dark }",
-        "    users:",
-        "      - username: Visitor",
-        "        password: visitor-pass-1",
-        "        theme: { guest_can_change_mode: true }",
-      ].join("\n"),
-    );
-    const port = randomPort();
-    const runtime = new Runtime({ ...testEnvConfig(port), legacyConfigPath: path }, Store.memory(), "standalone");
-    await runtime.init();
-    expect(await importLegacyConfig(runtime, path)).toBe(true);
-    expect(await importLegacyConfig(runtime, path)).toBe(false);
-    expect(runtime.haSettings).toMatchObject({ url: `http://localhost:${ha.port}`, token: MOCK_TOKEN, configured_by: "config.yaml" });
-    expect(runtime.publicUrl).toBe("https://guests.example.com");
-    expect(runtime.store.listDashboards()).toEqual([{ id: "guest-dash", answers: {} }]);
-    const guests = await runtime.guests.list();
-    expect(guests).toMatchObject([{ username: "Visitor", dashboard: "guest-dash" }]);
-    await runtime.connect();
-    expect(runtime.state).toBe("connected");
-    runtime.close();
-    ha.stop();
+describe("switching guests and dashboards off", () => {
+  let env: TestEnv;
+  let a: ReturnType<typeof adminApi>;
+  beforeAll(async () => {
+    env = await startTestEnv();
+    a = adminApi(env);
+    a.jar.set("ga_admin", env.sessions.create("admin", "Tester").id);
+  });
+  afterAll(() => env.stop());
+
+  // better-auth rate-limits HTTP sign-ins per process, and other tests use them up;
+  // its server-side API is not rate limited.
+  const signIn = async () => {
+    const res = await env.runtime.auth.api.signInUsername({ body: { username: "guest", password: "guest-pass-123" }, asResponse: true });
+    expect(res.status).toBe(200);
+    return res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  };
+  const connect = async (cookie: string) => {
+    const token = (await env.hassToken(cookie)).body.access_token as string;
+    const ws = new GuestWs(env.wsUrl);
+    expect((await ws.auth(token)).type).toBe("auth_ok");
+    return ws;
+  };
+  let cookie = "";
+
+  test("an inactive guest cannot use the account until switched on again", async () => {
+    const guest = ((await a.call("GET", "guests")).body as Json[]).find((g) => g.username === "guest")!;
+    const first = await signIn();
+    const ws = await connect(first);
+
+    const off = await a.call("PATCH", `guests/${guest.id}`, { enabled: false });
+    expect(off.body.enabled).toBe(false);
+    await ws.closed;
+    expect((await env.hassToken(first)).status).toBe(401);
+    // signing in still works, but the account gives no access
+    cookie = await signIn();
+    expect((await env.hassToken(cookie)).status).toBe(403);
+    expect((await fetch(`${env.url}/api/states`, { headers: { cookie } })).status).toBe(403);
+
+    expect((await a.call("PATCH", `guests/${guest.id}`, { enabled: true })).body.enabled).toBe(true);
+    expect((await env.hassToken(cookie)).status).toBe(200);
+  });
+
+  test("an inactive dashboard denies its guests", async () => {
+    const ws = await connect(cookie);
+    const off = await a.call("PATCH", "dashboards/guest-dash", { enabled: false });
+    expect(off.status).toBe(200);
+    expect((off.body.configured as Json[]).find((d) => d.id === "guest-dash")!.enabled).toBe(false);
+    expect(env.runtime.store.getDashboard("guest-dash")!.enabled).toBe(false);
+    await ws.closed;
+    expect((await env.hassToken(cookie)).status).toBe(403);
+
+    await a.call("PATCH", "dashboards/guest-dash", { enabled: true });
+    expect((await env.hassToken(cookie)).status).toBe(200);
   });
 });
 

@@ -20,8 +20,6 @@ export interface Env {
   supervisorToken?: string;
   /** Port the Supervisor's ingress proxy talks to (app mode only). */
   ingressPort: number;
-  /** Old config file that is imported once when the database is still empty. */
-  legacyConfigPath: string;
   /** Built admin page (`bun run build:admin`). */
   adminUiDir: string;
 }
@@ -42,7 +40,6 @@ export function readEnv(): Env {
     frontendRepo: process.env.GUEST_ASSISTANT_FRONTEND_REPO || undefined,
     supervisorToken,
     ingressPort: intVar("INGRESS_PORT", 8099),
-    legacyConfigPath: process.env.CONFIG_FILE ?? "config.yaml",
     adminUiDir: resolve(process.env.ADMIN_UI_DIR ?? join(import.meta.dir, "../admin-ui/dist")),
   };
 }

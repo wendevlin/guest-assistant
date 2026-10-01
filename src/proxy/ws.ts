@@ -69,7 +69,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     if (!payload) return fail("Invalid token");
     const dashboard = dashboards.get(payload.dashboard);
     if (!dashboard) return fail("Invalid dashboard");
-    if (dashboard.status !== "ok") return fail("Dashboard not available");
+    if (!dashboard.usable) return fail("Dashboard not available");
     const ha = endpoint();
     if (!ha) return fail("Not connected to Home Assistant");
     const token = ha.token;
@@ -133,7 +133,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     const { haWs, dashboard } = ws.data;
     if (!haWs || !dashboard) return;
 
-    if (dashboard.status !== "ok") {
+    if (!dashboard.usable) {
       terminate(ws);
       return;
     }
@@ -279,7 +279,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
    * Otherwise they get the lovelace_updated event that was held back.
    */
   function dashboardChanged(dashboard: Dashboard): void {
-    if (dashboard.status !== "ok" || dashboard.accessChanged) {
+    if (!dashboard.usable || dashboard.accessChanged) {
       closeForDashboard(dashboard.id);
       return;
     }
@@ -306,5 +306,3 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
   return { handlers, upgrade, closeForUser, closeForDashboard, closeAll, dashboardChanged };
 }
-
-export type WsProxy = ReturnType<typeof createWsProxy>;

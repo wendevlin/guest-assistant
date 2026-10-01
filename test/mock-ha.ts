@@ -14,7 +14,7 @@ export const ADMIN_TOKEN = "admin-token";
 /** Access token of a regular HA user. */
 export const USER_TOKEN = "user-token";
 
-export interface MockUser {
+interface MockUser {
   id: string;
   name: string;
   username: string | null;

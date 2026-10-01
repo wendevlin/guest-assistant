@@ -148,7 +148,7 @@ function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Ob
 // ── call_service ─────────────────────────────────────────────────────────
 
 /** Entity-scoped services a guest may call, per domain. */
-export const ENTITY_SERVICES: Record<string, readonly string[]> = {
+const ENTITY_SERVICES: Record<string, readonly string[]> = {
   light: ["turn_on", "turn_off", "toggle"],
   switch: ["turn_on", "turn_off", "toggle"],
   input_boolean: ["turn_on", "turn_off", "toggle"],
@@ -224,7 +224,7 @@ function containsTemplate(value: unknown): boolean {
   return false;
 }
 
-export function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
+function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
   const { domain, service } = msg;
   if (typeof domain !== "string" || typeof service !== "string") return reject("domain/service required");
   if (msg.return_response !== undefined && msg.return_response !== false) return reject("return_response not allowed");
@@ -469,6 +469,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "lovelace/resources/list": { fields: [], validate: () => ({ kind: "reply", result: [] }) },
 
   // Registries
+  "config/entity_registry/list": { fields: [], filterResult: (r, ctx) => F.filterEntityRegistry(r, A(ctx)) },
   "config/entity_registry/list_for_display": { fields: [], filterResult: (r, ctx) => F.filterEntityRegistryDisplay(r, A(ctx)) },
   "config/entity_registry/get": { fields: ["entity_id"], validate: requireEntity("entity_id") },
   "config/entity_registry/get_entries": { fields: ["entity_ids"], validate: requireEntityList("entity_ids") },

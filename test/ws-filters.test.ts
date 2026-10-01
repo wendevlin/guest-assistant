@@ -23,6 +23,15 @@ describe("ws-filters", () => {
     expect(out.entities).toEqual([{ ei: "light.kitchen", di: "dev-kitchen" }, { ei: "lock.front", di: "dev-lock" }]);
   });
 
+  test("filterEntityRegistry keeps only allowed entries", () => {
+    const entries = [
+      { entity_id: "light.kitchen", options: { light: { favorite_colors: [{ hs_color: [30, 80] }] } } },
+      { entity_id: "light.bedroom", options: {} },
+    ];
+    expect(F.filterEntityRegistry(entries, A)).toEqual([entries[0]]);
+    expect(F.filterEntityRegistry({ not: "a list" }, A)).toEqual([]);
+  });
+
   test("filterDeviceRegistry drops foreign devices and sensitive fields", () => {
     const out = F.filterDeviceRegistry(DEVICES, new Set(["dev-lock"])) as Array<Record<string, unknown>>;
     expect(out).toHaveLength(1);

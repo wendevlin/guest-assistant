@@ -27,6 +27,12 @@ export function filterSubscribeEntitiesEvent(event: unknown, A: EntitySet): unkn
   return out;
 }
 
+/** config/entity_registry/list: array of entries; e.g. the light color favorites read `options` from it. */
+export function filterEntityRegistry(result: unknown, A: EntitySet): unknown {
+  if (!Array.isArray(result)) return [];
+  return result.filter((e) => isObj(e) && typeof e.entity_id === "string" && A.has(e.entity_id));
+}
+
 /** config/entity_registry/list_for_display: { entity_categories, entities: [{ ei, di, … }] } */
 export function filterEntityRegistryDisplay(result: unknown, A: EntitySet): unknown {
   if (!isObj(result)) return result;

@@ -101,10 +101,6 @@ steps 2 to 4 again and replaces the proxy's old HA user.
 set-up needs no input. The admin page is only reachable through ingress. See
 `addon/README.md`; the packaging there is not tested on a real Supervisor yet.
 
-**Upgrading from config.yaml:** on the first start with an empty database an
-existing `config.yaml` is imported once (connection, dashboards and
-guests; theme settings are ignored). After that the file is ignored and can be deleted.
-
 ### Questions for the admin
 
 Some things on a dashboard cannot be decided by the proxy. They do not
@@ -132,12 +128,29 @@ A few settings are environment variables (Bun also reads a `.env` file, see
 | `PORT` | `3001` | guest port; standalone, the admin page is under `/admin/` |
 | `DATA_DIR` | `data` (`/data` as an app) | SQLite database |
 | `GUEST_ASSISTANT_FRONTEND_REPO` | | serve the guest frontend from a `guest-assistant-frontend` checkout instead of `./public` |
-| `CONFIG_FILE` | `config.yaml` | old config file to import once |
 | `INGRESS_PORT` | `8099` | admin page as an app |
 | `ADMIN_UI_DIR` | `admin-ui/dist` | built admin page |
 
 Guests change their language in the settings dialog; the choice is stored
 on their device only.
+
+## What to know before exposing it
+
+- The database in `DATA_DIR` holds the proxy's HA token, the guests' password
+  hashes and their sessions. It is created with mode 0600 in a 0700
+  directory; whoever can read it can act as the proxy's HA user.
+- The setup code is printed to the log and stays valid until set-up is done.
+  Anyone who can read the log can start the set-up (they still need HA admin
+  credentials to finish it).
+- Sign-in attempts are rate-limited per client address. Behind a reverse
+  proxy or Docker's port forwarding all guests share one address, so one
+  misbehaving client can lock out the sign-in for everyone for a minute.
+- Deleting a guest, changing their password or dashboard ends their
+  connections and refuses the tokens they still hold. Sessions do not
+  survive a restart of the proxy.
+- This is alpha software. Read the "What a guest can do" table as the
+  contract; anything not listed there is meant to be denied, and a way
+  around it is a bug worth reporting.
 
 ## Running
 

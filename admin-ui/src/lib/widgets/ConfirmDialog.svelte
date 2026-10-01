@@ -1,6 +1,5 @@
 <script lang="ts">
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import { t } from "$lib/i18n";
 
   let {
     open = $bindable(false),
@@ -16,7 +15,7 @@
       <AlertDialog.Title>{title}</AlertDialog.Title>
     </AlertDialog.Header>
     <AlertDialog.Footer>
-      <AlertDialog.Cancel>{t("cancel")}</AlertDialog.Cancel>
+      <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
       <AlertDialog.Action
         class="bg-destructive text-white hover:bg-destructive/90"
         onclick={() => {

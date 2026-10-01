@@ -9,7 +9,6 @@
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
-    "@internationalized/date": "^3.12.4",
     "@lucide/svelte": "^1.48.0",
     "@types/bun": "^1.4.2",
     "bits-ui": "^2.19.3",
