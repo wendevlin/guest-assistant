@@ -1,5 +1,12 @@
 # Guest Assistant
 
+> [!WARNING]
+> **Alpha, not for production use.** Guest Assistant is at an early stage. It
+> has not had an independent security review and has not been tested widely.
+> Settings and data may change between versions without migration. Don't rely
+> on it to protect your home, and don't expose the guest port to the internet
+> unless you accept that risk.
+
 A guest-facing proxy in front of Home Assistant (HA). Guests log in to the
 proxy with their own username and password and get exactly one HA dashboard.
 They can see and control only the entities that appear on that dashboard.
