@@ -31,6 +31,8 @@ export interface DashboardView {
   entities: number;
   guests: number;
   pending: number;
+  /** Condition types the dashboard uses to show or hide content. */
+  conditions: Array<{ type: string; paths: string[] }>;
   questions: QuestionView[];
 }
 

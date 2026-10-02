@@ -135,6 +135,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       entities: d.entities.size,
       guests,
       pending: d.pending.length,
+      conditions: d.conditionUses,
       questions: d.questions.map((q) => ({
         key: q.key,
         kind: q.kind,

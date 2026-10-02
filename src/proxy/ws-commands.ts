@@ -12,6 +12,7 @@
 
 import type { Dashboard } from "../dashboard";
 import { entityDomain, isEntityId } from "../dashboard";
+import { checkCondition } from "../dashboard/conditions";
 import * as F from "./ws-filters";
 
 export type Obj = Record<string, unknown>;
@@ -306,6 +307,13 @@ function validateRenderTemplate(msg: Obj, ctx: CommandContext): Verdict {
   return forward(out);
 }
 
+// ── subscribe_condition ──────────────────────────────────────────────────
+
+function validateSubscribeCondition(msg: Obj, ctx: CommandContext): Verdict {
+  const error = checkCondition(msg.condition, ctx.dashboard.conditions, A(ctx));
+  return error ? reject(error) : forward(msg);
+}
+
 // ── auth/sign_path ───────────────────────────────────────────────────────
 
 const SIGNABLE_PATHS: Array<{ re: RegExp; domain: string }> = [
@@ -543,6 +551,8 @@ export const COMMANDS: Record<string, CommandSpec> = {
     subscription: true,
     validate: validateRenderTemplate,
   },
+  // Dashboard visibility conditions, evaluated by HA (see dashboard/conditions.ts)
+  subscribe_condition: { fields: ["condition"], subscription: true, validate: validateSubscribeCondition },
   "media_source/resolve_media": {
     fields: ["media_content_id", "expires"],
     validate: (msg, ctx) =>
