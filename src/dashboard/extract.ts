@@ -9,6 +9,8 @@
  * every collected id was written into the dashboard by an admin.
  */
 
+import { canonical, isConditionLeaf } from "./conditions";
+
 export type Obj = Record<string, unknown>;
 
 export interface Extraction {
@@ -17,6 +19,8 @@ export interface Extraction {
   templates: Map<string, Obj>;
   /** `media-source://…` ids referenced as images or in play_media actions */
   mediaSources: Set<string>;
+  /** canonical JSON of every condition leaf (see conditions.ts) */
+  conditions: Set<string>;
 }
 
 /** Keys whose values reference entities (string, string[] or { entity }). */
@@ -49,6 +53,7 @@ export function extract(config: Obj): Extraction {
     entities: new Set(),
     templates: new Map(),
     mediaSources: new Set(),
+    conditions: new Set(),
   };
   walk(config, out);
   return out;
@@ -67,6 +72,14 @@ function walk(node: unknown, out: Extraction): void {
   for (const key of ["image", "media_content_id"]) {
     const value = node[key];
     if (typeof value === "string" && value.startsWith("media-source://")) out.mediaSources.add(value);
+  }
+
+  if (isConditionLeaf(node)) out.conditions.add(canonical(node));
+  // Conditions may compare against other entities (`state: input_select.mode`, `above: input_number.min`).
+  if (typeof node.condition === "string" || "entity" in node) {
+    for (const key of ["state", "state_not", "above", "below"]) {
+      for (const value of [node[key]].flat()) if (isEntityId(value)) out.entities.add(value);
+    }
   }
 
   for (const [key, value] of Object.entries(node)) {

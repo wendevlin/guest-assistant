@@ -1,5 +1,6 @@
 import type { HaClient } from "../ha/client";
 import { HaCommandError } from "../ha/client";
+import { findConditions, type ConditionUse } from "./conditions";
 import { entityDomain, extract, isObj, type Obj } from "./extract";
 import {
   decide,
@@ -13,6 +14,7 @@ import {
 import { validate, type Violation } from "./validate";
 
 export type { Violation } from "./validate";
+export type { ConditionUse } from "./conditions";
 export type { Question } from "./interactions";
 export { entityDomain, isEntityId } from "./extract";
 
@@ -43,6 +45,8 @@ export class Dashboard {
   private _devices = new Set<string>();
   private _templates = new Map<string, Obj>();
   private _mediaSources = new Set<string>();
+  private _conditions = new Set<string>();
+  private _conditionUses: ConditionUse[] = [];
   private listeners: Array<(d: Dashboard) => void> = [];
   private _questions: Question[] = [];
   private _answers: Readonly<Record<string, string>> = {};
@@ -51,7 +55,7 @@ export class Dashboard {
 
   /**
    * Whether the last (re)load changed what guests may access (entities,
-   * templates, media sources). Open guest connections then hold state
+   * templates, media sources, conditions). Open guest connections then hold state
    * filtered by the old allowlist and must start over.
    */
   accessChanged = false;
@@ -88,6 +92,14 @@ export class Dashboard {
   }
   get mediaSources(): ReadonlySet<string> {
     return this._mediaSources;
+  }
+  /** Canonical JSON of the condition leaves written on the dashboard (see conditions.ts). */
+  get conditions(): ReadonlySet<string> {
+    return this._conditions;
+  }
+  /** Condition types that show or hide content, shown to the admin. */
+  get conditionUses(): readonly ConditionUse[] {
+    return this._conditionUses;
   }
 
   /** Everything the admin has to decide about this dashboard (see interactions.ts). */
@@ -137,6 +149,8 @@ export class Dashboard {
     this._domains = new Set([...extraction.entities].map(entityDomain));
     this._templates = extraction.templates;
     this._mediaSources = extraction.mediaSources;
+    this._conditions = extraction.conditions;
+    this._conditionUses = findConditions(config);
     const players = [...groupablePlayers].filter((id) => extraction.entities.has(id));
     this._questions = findQuestions(config, this.urlPath, players);
     this._decisions = decide(this._questions, this._answers);
@@ -146,7 +160,12 @@ export class Dashboard {
   }
 
   private accessKey(): string {
-    return JSON.stringify([[...this._entities].sort(), [...this._templates.keys()].sort(), [...this._mediaSources].sort()]);
+    return JSON.stringify([
+      [...this._entities].sort(),
+      [...this._templates.keys()].sort(),
+      [...this._mediaSources].sort(),
+      [...this._conditions].sort(),
+    ]);
   }
 
   /** Denies access until the next successful load, e.g. while switching HA connections. */
@@ -219,6 +238,8 @@ export class Dashboard {
     this._devices = new Set();
     this._templates = new Map();
     this._mediaSources = new Set();
+    this._conditions = new Set();
+    this._conditionUses = [];
     this._questions = [];
     this._decisions = decide([], {});
     this.violations = violations;
