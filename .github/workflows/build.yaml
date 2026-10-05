@@ -1,8 +1,11 @@
 name: Build
 
-# Tests every push and pull request. A tag vX.Y.Z (matching `version` in
-# guest_assistant/config.yaml) also builds the app images and pushes them to
-# ghcr.io/wendevlin/{arch}-guest-assistant:X.Y.Z.
+# Tests every push and pull request. Releases the app when main carries a
+# `version` in guest_assistant/config.yaml that has no tag vX.Y.Z yet: builds
+# the images, pushes them to ghcr.io/wendevlin/{arch}-guest-assistant:X.Y.Z and
+# then creates the tag. The Supervisor offers the update as soon as the
+# version is on main, so the images must follow without a manual step.
+# Pushing a tag vX.Y.Z by hand releases as well.
 #
 # The guest frontend is not built here: it comes from the release of
 # wendevlin/guest-assistant-frontend named in .github/frontend-release.
@@ -34,9 +37,51 @@ jobs:
       - run: bun run typecheck
       - run: bun test
 
+  release:
+    name: Release check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Check
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' guest_assistant/config.yaml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" = tag ]; then
+            if [ "$REF_NAME" != "v$version" ]; then
+              echo "Tag $REF_NAME does not match version $version in guest_assistant/config.yaml" >&2
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" != pull_request ] && [ "$REF" = refs/heads/main ]; then
+            # Exit code 2: no such tag. Anything else but 0 is an error, not a release.
+            code=0
+            git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || code=$?
+            case $code in
+              0) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+              2)
+                echo "Version $version on main has no tag yet: releasing it"
+                echo "publish=true" >> "$GITHUB_OUTPUT"
+                ;;
+              *) exit "$code" ;;
+            esac
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   image:
     name: Image (${{ matrix.arch }})
-    needs: test
+    needs: [test, release]
     strategy:
       matrix:
         include:
@@ -67,23 +112,10 @@ jobs:
       - name: Package
         run: scripts/build-addon.sh --frontend .build/frontend-dist
 
-      - name: Version
-        id: version
-        env:
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' guest_assistant/config.yaml)
-          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
-            echo "Tag $REF_NAME does not match version $version in guest_assistant/config.yaml" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Build
         env:
           ARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           docker build dist/addon/guest_assistant \
             --build-arg BUILD_ARCH="$ARCH" \
@@ -92,13 +124,31 @@ jobs:
             --tag "ghcr.io/wendevlin/${ARCH}-guest-assistant:latest"
 
       - name: Push
-        if: github.ref_type == 'tag'
+        if: needs.release.outputs.publish == 'true'
         env:
           ARCH: ${{ matrix.arch }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
           docker push "ghcr.io/wendevlin/${ARCH}-guest-assistant:${VERSION}"
           docker push "ghcr.io/wendevlin/${ARCH}-guest-assistant:latest"
+
+  tag:
+    name: Tag release
+    needs: [release, image]
+    # Only after both images are pushed; a tag pushed with GITHUB_TOKEN does
+    # not start another run.
+    if: needs.release.outputs.publish == 'true' && github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create tag
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "v$VERSION"
