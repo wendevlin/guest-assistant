@@ -49,6 +49,7 @@ Browser ──► guest-assistant (Bun) ──► Home Assistant
 | History, logbook, statistics | only for allowed entities, responses filtered |
 | Cameras | stream, WebRTC and signed snapshot URLs for allowed cameras only |
 | Templates | only markdown templates that appear verbatim in the dashboard; `variables` are fixed by the proxy |
+| Conditions | `subscribe_condition` (visibility and conditional cards, evaluated by HA) only with conditions written on the dashboard, or `state`/`numeric_state` on allowed entities; combined with `and`/`or`/`not` as the frontend groups them. HA only answers true or false. Template, device, zone, sun and other conditions work as in HA, because the admin wrote them. The admin page lists the condition types each dashboard uses; `user` and `location` conditions never match a guest |
 | Registries | entity/device registries reduced to allowed entities and their devices |
 | Config | location, URLs and Assist are hidden |
 | User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` is unset, so guests get HA's default theme and the themes set on the dashboard and its views, with dark mode following the device |
@@ -71,7 +72,7 @@ Putting an entity on a guest dashboard **is** the permission grant.
 | `area`, `iframe`, `energy-*` cards, `map` with `geo_location_sources` | show entities dynamically or embed foreign content |
 | `logbook`, `history-graph`, `statistics-graph`, `statistic`, `map` without explicit `entities`/`entity` | would show everything |
 | `call-service`/`perform-action` with `area_id`/`device_id`/`label_id`/`floor_id` or without an entity target | cannot be mapped to the allowlist |
-| templates outside markdown `content` | cannot be allowlisted |
+| templates outside markdown `content` and conditions | cannot be allowlisted |
 | picture card images that are not `media-source://`, `/local/`, `/api/image/serve/`, `http(s)://` or `data:` | unverifiable source |
 
 Rejections are logged with the rule and the path inside the config.
