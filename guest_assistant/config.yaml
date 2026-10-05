@@ -1,5 +1,5 @@
 # Home Assistant app manifest. Installed from this repository, the Supervisor
-# pulls the image that CI builds for the tag v<version> (.github/workflows/build.yaml).
+# pulls the image that CI builds when this version reaches main (.github/workflows/build.yaml).
 # scripts/build-addon.sh packages a local app instead: it drops the `image`
 # line, so the Supervisor builds the Dockerfile on the device.
 name: Guest Assistant
