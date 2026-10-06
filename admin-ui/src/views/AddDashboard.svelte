@@ -28,6 +28,9 @@
   let error = $state<string | null>(null);
 
   const candidates = $derived(available.filter((d) => !d.added));
+  // From `available`, not `candidates`: once added, the dashboard leaves `candidates`
+  // while the dialog is still rendered.
+  const selected = $derived(available.find((d) => d.id === id));
   const label = (d: DashboardsView["available"][number]) => `${d.title} (/${d.id})${d.require_admin ? " – admins only" : ""}`;
   const shown = $derived(
     preview
@@ -89,7 +92,7 @@
           <Label for="add-dashboard">Dashboard</Label>
           <Select.Root type="single" value={id} onValueChange={pick}>
             <Select.Trigger id="add-dashboard" class="w-full">
-              {id ? label(candidates.find((d) => d.id === id)!) : "Choose a dashboard"}
+              {selected ? label(selected) : "Choose a dashboard"}
             </Select.Trigger>
             <Select.Content>
               {#each candidates as d (d.id)}
