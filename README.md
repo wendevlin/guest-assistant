@@ -203,6 +203,9 @@ on their device only.
   connections and refuses the tokens they still hold. Signing out does the
   same for that one device; the guest's other devices stay signed in.
   Sessions do not survive a restart of the proxy.
+- Session cookies are marked `Secure` when the guest address is https or
+  the reverse proxy sends `X-Forwarded-Proto: https`. Behind a
+  TLS-terminating proxy that does neither, they go out without it.
 - This is alpha software. Read the "What a guest can do" table as the
   contract; anything not listed there is meant to be denied, and a way
   around it is a bug worth reporting.

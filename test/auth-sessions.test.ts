@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createAuthHandler } from "../src/auth/handler";
 import { GuestWs, startTestEnv, type TestEnv } from "./helpers";
 
 let env: TestEnv;
@@ -126,5 +127,46 @@ describe("better-auth allowlist", () => {
     } finally {
       auth.handler = handler;
     }
+  });
+});
+
+describe("cookies behind a TLS-terminating proxy", () => {
+  const forwarded = { "x-forwarded-proto": "https" };
+
+  test("are Secure when the request was forwarded from https", async () => {
+    // Sent to the handler directly with a client address of its own; HTTP
+    // sign-ins share one rate-limit bucket (see signIn()).
+    const handler = createAuthHandler(env.runtime, () => {});
+    const res = await handler(
+      new Request(`${env.url}/api/auth/sign-in/username`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: env.url, "x-guest-assistant-client-ip": "192.0.2.1", ...forwarded },
+        body: JSON.stringify({ username: "traveller", password: "traveller-pass-1" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const cookies = res.headers.getSetCookie();
+    expect(cookies.length).toBeGreaterThan(0);
+    for (const c of cookies) expect(c).toMatch(/;\s*Secure(;|$)/i);
+    // Names are unchanged, so the session still works.
+    expect(cookies[0]).toStartWith("better-auth.session_token=");
+    const cookie = cookies.map((v) => v.split(";")[0]).join("; ");
+    expect((await env.hassToken(cookie)).status).toBe(200);
+
+    const out = await fetch(`${env.url}/api/auth/sign-out`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, origin: env.url, ...forwarded },
+      body: "{}",
+    });
+    expect(out.status).toBe(200);
+    expect(out.headers.getSetCookie().length).toBeGreaterThan(0);
+    for (const c of out.headers.getSetCookie()) expect(c).toMatch(/;\s*Secure(;|$)/i);
+  });
+
+  test("stay as they are over plain http", async () => {
+    const out = await signOut("");
+    expect(out.status).toBe(200);
+    expect(out.headers.getSetCookie().length).toBeGreaterThan(0);
+    for (const c of out.headers.getSetCookie()) expect(c).not.toMatch(/;\s*Secure(;|$)/i);
   });
 });
