@@ -8,7 +8,9 @@ name: Build
 # Pushing a tag vX.Y.Z by hand releases as well.
 #
 # The guest frontend is not built here: it comes from the release of
-# wendevlin/guest-assistant-frontend named in .github/frontend-release.
+# wendevlin/guest-assistant-frontend named in .github/frontend-release, and is
+# only used if its SHA-256 matches .github/frontend-release.sha256
+# (scripts/pin-frontend.sh writes both).
 
 on:
   push:
@@ -106,8 +108,12 @@ jobs:
         run: |
           release=$(cat .github/frontend-release)
           mkdir -p .build/frontend-dist
-          curl -fsSL "https://github.com/wendevlin/guest-assistant-frontend/releases/download/${release}/guest-assistant-frontend.tar.gz" \
-            | tar -xz -C .build/frontend-dist
+          curl -fsSL -o .build/guest-assistant-frontend.tar.gz \
+            "https://github.com/wendevlin/guest-assistant-frontend/releases/download/${release}/guest-assistant-frontend.tar.gz"
+          # A release asset can be replaced after it was published: unpack it
+          # only if it is the one that was pinned.
+          (cd .build && sha256sum --strict -c ../.github/frontend-release.sha256)
+          tar -xzf .build/guest-assistant-frontend.tar.gz -C .build/frontend-dist
 
       - name: Package
         run: scripts/build-addon.sh --frontend .build/frontend-dist
