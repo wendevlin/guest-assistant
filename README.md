@@ -140,7 +140,9 @@ There is no configuration file. Everything is managed on the admin page.
    instances on the network (zeroconf; needs host networking in Docker) and
    tries every address each one announces. You can also type an address.
 3. Sign in to Home Assistant as an administrator. HA's normal OAuth login is
-   used, so no app registration is needed.
+   used, so no app registration is needed. Before you are sent there, the
+   page shows the exact address you sign in at. Check that it is your Home
+   Assistant: any device on the network can announce itself as one.
 4. The proxy creates its own **non-admin** HA user ("Guest Assistant"), mints
    a long-lived token for it and stores only that token. The admin's token is
    revoked right after the request, and so is the one-off login of the new

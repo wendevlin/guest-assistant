@@ -112,3 +112,39 @@ describe("setup code", () => {
     });
   });
 });
+
+describe("signing in at the chosen Home Assistant", () => {
+  let env: TestEnv;
+  let a: ReturnType<typeof adminApi>;
+  beforeAll(async () => {
+    env = await startTestEnv({ configured: false });
+    const code = env.sessions.newSetupCode();
+    a = adminApi(env);
+    expect((await a.call("POST", "setup/code", { code })).status).toBe(200);
+  });
+  afterAll(() => env.stop());
+
+  test("an address that redirects elsewhere is refused", async () => {
+    // A look-alike that forwards to the real HA must not pass the check and then serve its own login page.
+    const lookalike = Bun.serve({ port: 0, fetch: (req) => Response.redirect(`${env.ha.url}${new URL(req.url).pathname}`, 302) });
+    try {
+      const res = await a.call("POST", "setup/connect", { url: `http://localhost:${lookalike.port}` });
+      expect(res.status).toBe(400);
+      expect(res.body.authorize_url).toBeUndefined();
+    } finally {
+      lookalike.stop(true);
+    }
+  });
+
+  test("the sign-in goes to exactly the probed, normalised origin", async () => {
+    const start = await a.call("POST", "setup/connect", { url: `  ${env.ha.url}/lovelace/0?edit=1  ` });
+    expect(start.status).toBe(200);
+    const authorize = new URL(start.body.authorize_url);
+    expect(authorize.origin).toBe(env.ha.url);
+    expect(authorize.pathname).toBe("/auth/authorize");
+    // The code is redeemed at the same origin, and that is the HA the proxy then uses.
+    const done = await a.completeOAuth(env.ha, start.body.authorize_url);
+    expect(done.headers.get("location")).toBe("/admin/");
+    expect(env.runtime.haSettings?.url).toBe(env.ha.url);
+  });
+});

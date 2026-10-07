@@ -1,6 +1,7 @@
 <script lang="ts">
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import * as Alert from "$lib/components/ui/alert";
+  import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
   import { Input } from "$lib/components/ui/input";
@@ -18,6 +19,9 @@
   let typed = $state("");
   let error = $state<string | null>(null);
   let busy = $state(false);
+  /** Where the browser goes to sign in, shown for a last check before leaving. */
+  let signIn = $state<{ url: string; origin: string } | null>(null);
+  let confirming = $state(false);
 
   const target = $derived(typed.trim() || picked);
 
@@ -26,7 +30,8 @@
     error = null;
     try {
       found = await api.discover();
-      if (!picked) picked = found.find((f) => f.reachable)?.url ?? "";
+      // Nothing is picked for the admin: anyone on the network can announce a "Home Assistant".
+      if (!found.some((f) => f.reachable && f.url === picked)) picked = "";
     } catch (err) {
       error = message(err);
     } finally {
@@ -41,9 +46,11 @@
     error = null;
     try {
       const { authorize_url } = await api.connect(target);
-      window.location.assign(authorize_url);
+      signIn = { url: authorize_url, origin: new URL(authorize_url).origin };
+      confirming = true;
     } catch (err) {
       error = message(err);
+    } finally {
       busy = false;
     }
   }
@@ -105,3 +112,19 @@
     </form>
   </Card.Content>
 </Card.Root>
+
+<AlertDialog.Root bind:open={confirming}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Sign in at this address?</AlertDialog.Title>
+      <code class="rounded bg-muted px-2 py-1 font-mono text-sm break-all">{signIn?.origin}</code>
+      <AlertDialog.Description>
+        You enter your administrator password there. Continue only if it is your Home Assistant: any device on the network can claim to be one.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+      <AlertDialog.Action onclick={() => signIn && window.location.assign(signIn.url)}>Continue</AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
