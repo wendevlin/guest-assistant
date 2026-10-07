@@ -206,11 +206,11 @@ describe("HTTP proxy", () => {
 
   test("the proxy's HA token is never sent on public paths", async () => {
     const before = env.ha.publicRequests.length;
-    for (const path of ["/local/plan.png", "/hacsfiles/card.js", "/static/does-not-exist.js"]) {
+    for (const path of ["/local/plan.png", "/static/does-not-exist.js"]) {
       expect((await fetch(`${env.url}${path}`, { headers: { cookie } })).status).toBe(200);
     }
     const seen = env.ha.publicRequests.slice(before);
-    expect(seen.map((r) => r.path)).toEqual(["/local/plan.png", "/hacsfiles/card.js", "/static/does-not-exist.js"]);
+    expect(seen.map((r) => r.path)).toEqual(["/local/plan.png", "/static/does-not-exist.js"]);
     expect(seen.every((r) => r.authorization === null)).toBe(true);
   });
 

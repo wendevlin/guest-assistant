@@ -50,6 +50,7 @@ export class Dashboard {
   private _devices = new Set<string>();
   private _templates = new Map<string, Obj>();
   private _mediaSources = new Set<string>();
+  private _mediaContentIds = new Set<string>();
   private _conditions = new Set<string>();
   private _conditionUses: ConditionUse[] = [];
   private listeners: Array<(d: Dashboard) => void> = [];
@@ -60,8 +61,9 @@ export class Dashboard {
 
   /**
    * Whether the last (re)load changed what guests may access (entities,
-   * templates, media sources, conditions). Open guest connections then hold state
-   * filtered by the old allowlist and must start over.
+   * templates, media sources, media content ids, conditions). Open guest
+   * connections then hold state filtered by the old allowlist and must start
+   * over.
    */
   accessChanged = false;
 
@@ -97,6 +99,10 @@ export class Dashboard {
   }
   get mediaSources(): ReadonlySet<string> {
     return this._mediaSources;
+  }
+  /** Media content ids written into actions; `media_player.play_media` plays nothing else. */
+  get mediaContentIds(): ReadonlySet<string> {
+    return this._mediaContentIds;
   }
   /** Canonical JSON of the condition leaves written on the dashboard (see conditions.ts). */
   get conditions(): ReadonlySet<string> {
@@ -169,6 +175,7 @@ export class Dashboard {
     this._domains = new Set([...extraction.entities].map(entityDomain));
     this._templates = extraction.templates;
     this._mediaSources = extraction.mediaSources;
+    this._mediaContentIds = extraction.mediaContentIds;
     this._conditions = extraction.conditions;
     this._conditionUses = findConditions(clean);
     const players = [...groupablePlayers].filter((id) => extraction.entities.has(id));
@@ -185,6 +192,7 @@ export class Dashboard {
       [...this._entities].sort(),
       [...this._templates.keys()].sort(),
       [...this._mediaSources].sort(),
+      [...this._mediaContentIds].sort(),
       [...this._conditions].sort(),
     ]);
   }
@@ -266,6 +274,7 @@ export class Dashboard {
     this._devices = new Set();
     this._templates = new Map();
     this._mediaSources = new Set();
+    this._mediaContentIds = new Set();
     this._conditions = new Set();
     this._conditionUses = [];
     this._questions = [];

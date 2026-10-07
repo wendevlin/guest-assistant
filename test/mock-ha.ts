@@ -35,7 +35,8 @@ export const STATES = [
   { entity_id: "person.owner", state: "home", attributes: { latitude: 1, longitude: 2 }, last_changed: "", last_updated: "", context: {} },
   { entity_id: "media_player.living", state: "idle", attributes: { supported_features: 524288 | 1 }, last_changed: "", last_updated: "", context: {} },
   { entity_id: "media_player.kitchen", state: "idle", attributes: { supported_features: 524288 }, last_changed: "", last_updated: "", context: {} },
-  { entity_id: "media_player.tv", state: "off", attributes: { supported_features: 1 }, last_changed: "", last_updated: "", context: {} },
+  // PAUSE | BROWSE_MEDIA
+  { entity_id: "media_player.tv", state: "off", attributes: { supported_features: 1 | 131072 }, last_changed: "", last_updated: "", context: {} },
 ];
 
 export const REGISTRY = [
@@ -280,6 +281,7 @@ export function startMockHA(port = 0): MockHA {
         );
       }
       if (url.pathname.startsWith("/api/camera_proxy/")) return new Response("IMG", { headers: { "content-type": "image/jpeg" } });
+      if (url.pathname.startsWith("/api/map_tiles/")) return new Response(`tile ${url.pathname}${url.search}`);
       return new Response("mock: not found", { status: 404 });
     },
     websocket: {

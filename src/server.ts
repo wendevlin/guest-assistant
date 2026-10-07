@@ -9,7 +9,7 @@ import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
 import type { Runtime } from "./runtime";
 
-const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/hacsfiles/", "/admin/"];
+const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/admin/"];
 
 /** Standalone, the admin page lives here on the guest port. */
 export const ADMIN_BASE = "/admin/";

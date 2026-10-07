@@ -2,7 +2,7 @@ import type { BunRequest } from "bun";
 import { isDenied, type RequireGuest } from "../auth/guard";
 import type { Dashboard } from "../dashboard";
 import type { HaEndpoint } from "../ha/endpoint";
-import { filterLogbookEntries } from "./ws-filters";
+import { filterLogbookEntries, filterStates, guestState } from "./ws-filters";
 
 /**
  * HTTP routes proxied to Home Assistant.
@@ -90,8 +90,11 @@ export function createHttpRoutes(endpoint: () => HaEndpoint | null, requireGuest
 
   const passthrough = (base: string) => guarded(under(base), (req, _dashboard, target) => proxy(req, target, { authenticate: true }));
 
-  /** `<base>/<entity_id>` for an entity on the guest's dashboard; nothing below or beside it. */
-  function entityRoute(base: string): Handler {
+  /**
+   * `<base>/<entity_id>` for an entity on the guest's dashboard; nothing below
+   * or beside it. `filter`, if given, rewrites HA's JSON answer.
+   */
+  function entityRoute(base: string, filter?: (body: unknown) => unknown): Handler {
     return async (req) => {
       const entityId = (req.params as { entity_id?: string }).entity_id;
       const target = entityId ? upstreamTarget(req, exactly(`${base}/${entityId}`)) : null;
@@ -99,7 +102,9 @@ export function createHttpRoutes(endpoint: () => HaEndpoint | null, requireGuest
       const guest = await requireGuest(req);
       if (isDenied(guest)) return guest;
       if (!guest.dashboard.entities.has(entityId)) return new Response("Forbidden", { status: 403 });
-      return proxy(req, target, { authenticate: true });
+      const upstream = await proxy(req, target, { authenticate: true });
+      if (!filter || !upstream.ok) return upstream;
+      return Response.json(filter(await upstream.json()));
     };
   }
 
@@ -114,8 +119,7 @@ export function createHttpRoutes(endpoint: () => HaEndpoint | null, requireGuest
   const states = guarded(exactly("/api/states"), async (req, dashboard, target) => {
     const upstream = await proxy(req, target, { authenticate: true });
     if (!upstream.ok) return new Response(upstream.statusText, { status: upstream.status });
-    const list = (await upstream.json()) as Array<{ entity_id?: string }>;
-    return Response.json(Array.isArray(list) ? list.filter((s) => s.entity_id && dashboard.entities.has(s.entity_id)) : []);
+    return Response.json(filterStates(await upstream.json(), dashboard.entities));
   });
 
   const history = guarded(under("/api/history/period"), async (req, dashboard, target) => {
@@ -150,7 +154,7 @@ export function createHttpRoutes(endpoint: () => HaEndpoint | null, requireGuest
 
   return {
     "/api/states": GET(states),
-    "/api/states/:entity_id": GET(entityRoute("/api/states")),
+    "/api/states/:entity_id": GET(entityRoute("/api/states", guestState)),
     "/api/camera_proxy/:entity_id": GET(entityRoute("/api/camera_proxy")),
     "/api/camera_proxy_stream/:entity_id": GET(entityRoute("/api/camera_proxy_stream")),
     "/api/image_proxy/:entity_id": GET(entityRoute("/api/image_proxy")),
@@ -164,9 +168,13 @@ export function createHttpRoutes(endpoint: () => HaEndpoint | null, requireGuest
     "/api/image/serve/*": GET(passthrough("/api/image/serve")),
     "/api/brands/*": GET(passthrough("/api/brands")),
     "/api/tts_proxy/*": GET(passthrough("/api/tts_proxy")),
-    // Public in HA as well (www/ folder, static frontend assets, HACS files).
+    // Map tiles, glyphs and sprites through HA's tile proxy (map card, person
+    // more-info); requests carry the map_tiles/access_token token.
+    "/api/map_tiles/*": GET(passthrough("/api/map_tiles")),
+    // Public in HA as well (www/ folder, static frontend assets). HACS files
+    // are not offered: lovelace resources are answered empty, so the guest
+    // UI never loads custom cards.
     "/static/*": GET(publicAsset("/static")),
     "/local/*": GET(publicAsset("/local")),
-    "/hacsfiles/*": GET(publicAsset("/hacsfiles")),
   };
 }

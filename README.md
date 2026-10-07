@@ -25,7 +25,8 @@ Browser ──► guest-assistant (Bun) ──► Home Assistant
 1. The proxy connects to HA as its own **non-admin** user (admin tokens are
    refused), loads every guest dashboard and analyses it:
    - all referenced entity ids become the guest's allowlist,
-   - markdown card templates and `media-source://` images are recorded verbatim,
+   - markdown card templates, `media-source://` images and the media that
+     actions play are recorded verbatim,
    - parts that cannot be analysed (custom cards, templates outside markdown,
      …) are **hidden from guests** and listed as issues for the admin; the
      allowlist only comes from what is left (see below),
@@ -48,13 +49,15 @@ Browser ──► guest-assistant (Bun) ──► Home Assistant
 
 | Area | Allowed |
 |---|---|
-| States | only entities on the dashboard (WS `get_states`, `subscribe_entities`, REST `/api/states`) |
-| Service calls | `target.entity_id` ⊆ allowlist, service from a per-domain allowlist, `homeassistant.turn_on/off/toggle` (without service data); no area/device/label targets, no `all`, no templates. Fields that point at other things are checked too: `media_player.join`/`unjoin` only if the admin allowed grouping for that player and `group_members` ⊆ allowlist, `play_media` only with `media-source://` ids written into the dashboard, no `variables` for `script.turn_on` / `automation.trigger` |
+| States | only entities on the dashboard (WS `get_states`, `subscribe_entities`, REST `/api/states`); media players do not announce media browsing, which is denied |
+| Service calls | `target.entity_id` ⊆ allowlist, service from a per-domain allowlist, `homeassistant.turn_on/off/toggle` (without service data); no area/device/label targets, no `all`, no templates. Fields that point at other things are checked too: `media_player.join`/`unjoin` only if the admin allowed grouping for that player and `group_members` ⊆ allowlist, `play_media` only with a `media_content_id` that an action on the dashboard plays, no `variables` for `script.turn_on` / `automation.trigger` |
 | History, logbook, statistics | only for allowed entities, responses filtered |
 | Cameras | stream, WebRTC and signed snapshot URLs for allowed cameras only |
 | Templates | only markdown templates that appear verbatim in the dashboard; `variables` are fixed by the proxy |
 | Conditions | `subscribe_condition` (visibility and conditional cards, evaluated by HA) only with conditions written on the dashboard, or `state`/`numeric_state` on allowed entities; combined with `and`/`or`/`not` as the frontend groups them. HA only answers true or false. Template, device, zone, sun and other conditions work as in HA, because the admin wrote them. The admin page lists the condition types each dashboard uses; `user` and `location` conditions never match a guest |
-| Registries | entity/device registries reduced to allowed entities and their devices |
+| Registries | entity/device registries reduced to allowed entities and their devices, without identifiers such as `unique_id`, MAC addresses or serial numbers |
+| Update entities | release notes of `update` entities on the dashboard |
+| Maps | map tiles through HA's tile proxy (`map_tiles/access_token`, `/api/map_tiles/*`) |
 | Config | location, URLs and Assist are hidden |
 | User data | never read from or written to the proxy's HA user: `language` is picked on the guest's device, `theme` is unset, so guests get HA's default theme and the themes set on the dashboard and its views, with dark mode following the device |
 
@@ -65,6 +68,12 @@ denied.
 If an entity is on the dashboard, every entity service of its domain is
 allowed, including `lock.unlock` or `alarm_control_panel.alarm_disarm`.
 Putting an entity on a guest dashboard **is** the permission grant.
+
+Attributes of an allowed entity reach guests as HA has them, and some name
+other entities: a group lists its members, a zone the persons in it, a person
+their device trackers. Putting such an entity on a dashboard shows guests the
+ids of those entities, which often contain names (`device_tracker.alices_phone`),
+but not their states.
 
 ### What is hidden from guests
 
@@ -90,7 +99,7 @@ path inside the config, and the admin gets a persistent notification in HA.
 | `logbook`, `history-graph`, `statistics-graph`, `statistic`, `map` without explicit `entities`/`entity` | would show everything |
 | `call-service`/`perform-action` with `area_id`/`device_id`/`label_id`/`floor_id` or without an entity target | cannot be mapped to the allowlist |
 | templates outside markdown `content` and conditions | cannot be allowlisted |
-| picture card images that are not `media-source://`, `/local/`, `/api/image/serve/`, `http(s)://` or `data:` | unverifiable source |
+| images (`image`, `dark_mode_image`, `state_image`) of cards, rows, badges and picture elements that are not `media-source://`, `/local/`, `/api/image/serve/`, `http(s)://` or `data:` | unverifiable source |
 
 ### Dashboards that are rejected
 
@@ -252,8 +261,8 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 - `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out`
 - `GET /api/auth/hass-token` → `{ access_token, refresh_token, expires_in, dashboard_url_path }`
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
-- `GET /api/states`, `/api/camera_proxy/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`
-- `GET /static/*`, `/local/*`, `/hacsfiles/*` (public, as in HA)
+- `GET /api/states`, `/api/states/:entity_id`, `/api/camera_proxy/:entity_id`, `/api/camera_proxy_stream/:entity_id`, `/api/image_proxy/:entity_id`, `/api/media_player_proxy/:entity_id`, `/api/calendars/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`, `/api/tts_proxy/*`, `/api/map_tiles/*`
+- `GET /static/*`, `/local/*` (public, as in HA)
 
 ## License
 

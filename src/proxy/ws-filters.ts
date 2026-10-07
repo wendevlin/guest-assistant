@@ -11,26 +11,93 @@ function isObj(v: unknown): v is Obj {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** get_states result: array of state objects. */
-export function filterStates(result: unknown, A: EntitySet): unknown {
-  if (!Array.isArray(result)) return [];
-  return result.filter((s) => isObj(s) && typeof s.entity_id === "string" && A.has(s.entity_id));
+/** MediaPlayerEntityFeature.BROWSE_MEDIA (frontend src/data/feature/media-player_entity_feature.ts). */
+const MEDIA_PLAYER_BROWSE_MEDIA = 131072;
+
+/**
+ * Attributes of an allowed entity as guests get them. Media browsing is
+ * denied (it can list local media and cameras), so media players do not
+ * announce it and the frontend hides its "Browse media" buttons. Anything
+ * changed is a copy; the input is left as it is.
+ */
+export function guestAttributes(entityId: string, attributes: unknown): unknown {
+  if (!entityId.startsWith("media_player.") || !isObj(attributes)) return attributes;
+  const features = attributes.supported_features;
+  if (typeof features !== "number" || (features & MEDIA_PLAYER_BROWSE_MEDIA) === 0) return attributes;
+  return { ...attributes, supported_features: features & ~MEDIA_PLAYER_BROWSE_MEDIA };
 }
 
-/** subscribe_entities event: { a: {id: state}, c: {id: diff}, r: [id] } */
+/** A state object ({ entity_id, state, attributes, … }) as guests get it. */
+export function guestState(state: unknown): unknown {
+  if (!isObj(state) || typeof state.entity_id !== "string") return state;
+  const attributes = guestAttributes(state.entity_id, state.attributes);
+  return attributes === state.attributes ? state : { ...state, attributes };
+}
+
+/** get_states result (and REST /api/states): array of state objects. */
+export function filterStates(result: unknown, A: EntitySet): unknown {
+  if (!Array.isArray(result)) return [];
+  return result.filter((s) => isObj(s) && typeof s.entity_id === "string" && A.has(s.entity_id)).map(guestState);
+}
+
+/**
+ * subscribe_entities event: { a: {id: state}, c: {id: diff}, r: [id] }.
+ * Compressed states carry their attributes in `a`, diffs the changed ones in `+.a`.
+ */
 export function filterSubscribeEntitiesEvent(event: unknown, A: EntitySet): unknown {
   if (!isObj(event)) return event;
   const out: Obj = { ...event };
-  if (isObj(event.a)) out.a = pickKeys(event.a, A);
-  if (isObj(event.c)) out.c = pickKeys(event.c, A);
+  if (isObj(event.a)) out.a = mapValues(pickKeys(event.a, A), withGuestAttributes);
+  if (isObj(event.c)) {
+    out.c = mapValues(pickKeys(event.c, A), (id, diff) =>
+      isObj(diff) && isObj(diff["+"]) ? { ...diff, "+": withGuestAttributes(id, diff["+"]) } : diff,
+    );
+  }
   if (Array.isArray(event.r)) out.r = event.r.filter((id) => typeof id === "string" && A.has(id));
   return out;
+}
+
+/** A compressed state or diff with its attributes (`a`) as guests get them. */
+function withGuestAttributes(entityId: string, compressed: unknown): unknown {
+  if (!isObj(compressed)) return compressed;
+  const attributes = guestAttributes(entityId, compressed.a);
+  return attributes === compressed.a ? compressed : { ...compressed, a: attributes };
+}
+
+/** state_changed event: { data: { entity_id, new_state, old_state } } */
+export function filterStateChangedEvent(event: Obj): Obj {
+  if (!isObj(event.data)) return event;
+  const data = event.data;
+  return { ...event, data: { ...data, new_state: guestState(data.new_state), old_state: guestState(data.old_state) } };
+}
+
+/**
+ * Registry fields guests do not get: `unique_id` is chosen by the integration
+ * and often is a MAC address or serial number. The guest UI falls back to the
+ * entity id where it reads it (more-info of scripts).
+ */
+function scrubEntityEntry(entry: Obj): Obj {
+  const copy: Obj = { ...entry };
+  delete copy.unique_id;
+  return copy;
 }
 
 /** config/entity_registry/list: array of entries; e.g. the light color favorites read `options` from it. */
 export function filterEntityRegistry(result: unknown, A: EntitySet): unknown {
   if (!Array.isArray(result)) return [];
-  return result.filter((e) => isObj(e) && typeof e.entity_id === "string" && A.has(e.entity_id));
+  return result.filter((e): e is Obj => isObj(e) && typeof e.entity_id === "string" && A.has(e.entity_id)).map(scrubEntityEntry);
+}
+
+/** config/entity_registry/get: one extended entry of an allowed entity. */
+export function filterEntityRegistryEntry(result: unknown, A: EntitySet): unknown {
+  if (!isObj(result) || typeof result.entity_id !== "string" || !A.has(result.entity_id)) return null;
+  return scrubEntityEntry(result);
+}
+
+/** config/entity_registry/get_entries: { entity_id: entry | null } */
+export function filterEntityRegistryEntries(result: unknown, A: EntitySet): unknown {
+  if (!isObj(result)) return {};
+  return mapValues(pickKeys(result, A), (_id, entry) => (isObj(entry) ? scrubEntityEntry(entry) : null));
 }
 
 /** config/entity_registry/list_for_display: { entity_categories, entities: [{ ei, di, … }] } */
@@ -160,5 +227,11 @@ function pickKeys(obj: Obj, allowed: EntitySet): Obj {
   for (const key of Object.keys(obj)) {
     if (allowed.has(key)) out[key] = obj[key];
   }
+  return out;
+}
+
+function mapValues(obj: Obj, fn: (key: string, value: unknown) => unknown): Obj {
+  const out: Obj = {};
+  for (const [key, value] of Object.entries(obj)) out[key] = fn(key, value);
   return out;
 }
