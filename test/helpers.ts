@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { AdminSessions } from "../src/admin/sessions";
 import type { Dashboard } from "../src/dashboard";
 import type { Env } from "../src/env";
@@ -172,4 +173,25 @@ export class GuestWs {
   close(): void {
     this.ws.close();
   }
+}
+
+/**
+ * Sends a GET with the request target exactly as given. fetch() normalises
+ * `..` and `%2e%2e` before sending, so it cannot test path traversal.
+ */
+export function rawGet(baseUrl: string, target: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
+  const { hostname, port } = new URL(baseUrl);
+  const head = Object.entries({ host: `${hostname}:${port}`, connection: "close", ...headers })
+    .map(([k, v]) => `${k}: ${v}\r\n`)
+    .join("");
+  return new Promise((resolve, reject) => {
+    const socket = connect(Number(port), hostname, () => socket.write(`GET ${target} HTTP/1.1\r\n${head}\r\n`));
+    let data = "";
+    socket.on("data", (chunk) => (data += chunk.toString()));
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const [statusLine = "", ...rest] = data.split("\r\n");
+      resolve({ status: Number(statusLine.split(" ")[1]), body: rest.join("\r\n").split("\r\n\r\n").slice(1).join("") });
+    });
+  });
 }

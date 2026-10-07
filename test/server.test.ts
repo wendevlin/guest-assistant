@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { DISABLED_AUTH_PATHS } from "../src/auth";
-import { GuestWs, startTestEnv, type TestEnv } from "./helpers";
+import { GuestWs, rawGet, startTestEnv, type TestEnv } from "./helpers";
 
 let env: TestEnv;
 let cookie: string;
@@ -174,6 +174,49 @@ describe("HTTP proxy", () => {
     const res = await fetch(`${env.url}/api/guest-assistant/status`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ home_assistant: "connected" });
+  });
+
+  test("paths that leave their route are refused, with or without a session", async () => {
+    // Each of these matches a route on the raw path but normalises to a
+    // different HA endpoint. None may be forwarded.
+    const escapes = [
+      "/local/../api/states",
+      "/static/../api/states",
+      "/hacsfiles/../api/states",
+      "/local/%2e%2e/api/states",
+      "/local/%2E%2E/api/camera_proxy/camera.bedroom",
+      "/local/..%2fapi%2fstates",
+      "/static/x/../../api/history/period?filter_entity_id=person.owner",
+      "/api/hls/../states",
+      "/api/brands/../camera_proxy/camera.bedroom",
+      "/api/history/period/../../states?filter_entity_id=light.kitchen",
+      "/api/logbook/../states?entity=light.kitchen",
+      "/api/camera_proxy/camera.garden/../camera.bedroom",
+    ];
+    for (const target of escapes) {
+      const variants: Record<string, string>[] = [{}, { cookie }, { authorization: `Bearer ${token}` }];
+      for (const headers of variants) {
+        const res = await rawGet(env.url, target, headers);
+        expect({ target, status: res.status }).toEqual({ target, status: 404 });
+        expect(res.body).not.toContain("entity_id");
+        expect(res.body).not.toContain("IMG");
+      }
+    }
+  });
+
+  test("the proxy's HA token is never sent on public paths", async () => {
+    const before = env.ha.publicRequests.length;
+    for (const path of ["/local/plan.png", "/hacsfiles/card.js", "/static/does-not-exist.js"]) {
+      expect((await fetch(`${env.url}${path}`, { headers: { cookie } })).status).toBe(200);
+    }
+    const seen = env.ha.publicRequests.slice(before);
+    expect(seen.map((r) => r.path)).toEqual(["/local/plan.png", "/hacsfiles/card.js", "/static/does-not-exist.js"]);
+    expect(seen.every((r) => r.authorization === null)).toBe(true);
+  });
+
+  test("the admin page only answers paths under /admin/", async () => {
+    // Normalises to /abcdefapi/state, which a naive slice would read as api/state.
+    expect((await rawGet(env.url, "/admin/../abcdefapi/state")).status).toBe(404);
   });
 
   test("public assets pass through without auth, frontend is served", async () => {
