@@ -255,7 +255,24 @@ function containsTemplate(value: unknown): boolean {
   return false;
 }
 
-function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
+/**
+ * The more-info dialog of a script runs it through the script's own service,
+ * `script.<object_id>`, without a target. Guests only get script.turn_on, so
+ * that call is mapped to script.turn_on on the script entity, if it is on the
+ * dashboard. Data would be script variables, which guests may not pass.
+ */
+function scriptRunAsTurnOn(msg: Obj, ctx: CommandContext): Obj {
+  if (msg.domain !== "script" || typeof msg.service !== "string" || ENTITY_SERVICES.script!.includes(msg.service)) return msg;
+  const entityId = `script.${msg.service}`;
+  if (!isEntityId(entityId) || !A(ctx).has(entityId) || msg.target !== undefined) return msg;
+  if (msg.service_data !== undefined && !(isObj(msg.service_data) && Object.keys(msg.service_data).length === 0)) return msg;
+  const out: Obj = { ...msg, service: "turn_on", target: { entity_id: entityId } };
+  delete out.service_data;
+  return out;
+}
+
+function validateCallService(original: Obj, ctx: CommandContext): Verdict {
+  const msg = scriptRunAsTurnOn(original, ctx);
   const { domain, service } = msg;
   if (typeof domain !== "string" || typeof service !== "string") return reject("domain/service required");
   if (msg.return_response !== undefined && msg.return_response !== false) return reject("return_response not allowed");

@@ -257,6 +257,28 @@ describe("features the guest UI would offer but the proxy denies", () => {
   });
 });
 
+describe("running a script from its more-info dialog", () => {
+  // more-info calls the script's own service, script.<object_id>, without a target.
+  const d = dashboard(cards({ type: "entities", entities: ["script.wake_up"] }));
+  const run = (msg: Obj) => evaluate({ id: 1, type: "call_service", domain: "script", ...msg }, ctx(d));
+
+  test("is forwarded as script.turn_on on the script entity", () => {
+    for (const service_data of [undefined, {}]) {
+      expect(run({ service: "wake_up", service_data })).toEqual({
+        kind: "forward",
+        msg: { id: 1, type: "call_service", domain: "script", service: "turn_on", target: { entity_id: ["script.wake_up"] } },
+      });
+    }
+  });
+
+  test("only for scripts on the dashboard and without variables", () => {
+    expect(run({ service: "disarm_and_unlock_front_door" }).kind).toBe("reject");
+    expect(run({ service: "wake_up", service_data: { minutes: 5 } }).kind).toBe("reject");
+    expect(run({ service: "wake_up", target: { entity_id: "script.wake_up" } }).kind).toBe("reject");
+    expect(run({ service: "reload" }).kind).toBe("reject");
+  });
+});
+
 describe("allowlist entries no guest UI uses", () => {
   const d = dashboard(cards({ type: "tile", entity: "light.kitchen" }));
 
