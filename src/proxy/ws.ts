@@ -17,11 +17,60 @@ export interface ConnState {
   subscriptions: Map<number, TrackedCommand>;
   /** highest message id accepted on this connection; ids must increase */
   lastId: number;
+  /** warnings caused by this connection */
+  log: LogLimiter;
 }
 
 type GuestSocket = ServerWebSocket<ConnState>;
 
 const MAX_MESSAGE_BYTES = 64 * 1024;
+/** Warnings per connection and minute; a guest's flood shows up as one summary line instead. */
+const LOG_LINES_PER_MINUTE = 10;
+/** Logged lines quote guest input, which may be up to MAX_MESSAGE_BYTES long. */
+const MAX_LOG_LINE = 300;
+
+/**
+ * Logs the first LOG_LINES_PER_MINUTE warnings of a minute. The rest are only
+ * counted and reported in one line when the minute ends or on flush(), so a
+ * guest cannot flood the log and real attempts do not drown in it.
+ */
+class LogLimiter {
+  private windowStart = 0;
+  private lines = 0;
+  private suppressed = 0;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(private readonly about: () => string) {}
+
+  warn(line: string): void {
+    const now = Date.now();
+    if (now - this.windowStart >= 60_000) {
+      this.flush();
+      this.windowStart = now;
+      this.lines = 0;
+    }
+    if (this.lines < LOG_LINES_PER_MINUTE) {
+      this.lines++;
+      // One line per warning, also when guest input contains line breaks.
+      const clean = line.replace(/[\u0000-\u001f\u007f]/g, " ");
+      console.warn(clean.length > MAX_LOG_LINE ? `${clean.slice(0, MAX_LOG_LINE)}…` : clean);
+      return;
+    }
+    this.suppressed++;
+    if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.windowStart + 60_000 - now);
+      this.timer.unref();
+    }
+  }
+
+  flush(): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.suppressed === 0) return;
+    console.warn(`[ws-proxy] suppressed ${this.suppressed} more warning(s) about ${this.about()}`);
+    this.suppressed = 0;
+  }
+}
 
 export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: ReadonlyMap<string, Dashboard>) {
   const all = new Set<GuestSocket>();
@@ -54,6 +103,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     ws.data.phase = "closed";
     ws.data.haWs?.close();
     ws.data.haWs = null;
+    ws.data.log.flush();
     unregister(ws);
     ws.close();
   }
@@ -160,7 +210,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
     switch (verdict.kind) {
       case "reject":
-        console.warn(`[ws-proxy] rejected ${String(msg.type)} from user ${ws.data.userId}: ${verdict.message}`);
+        ws.data.log.warn(`[ws-proxy] rejected ${String(msg.type)} from user ${ws.data.userId}: ${verdict.message}`);
         sendError(ws, id, "Operation not permitted");
         return;
       case "reply":
@@ -265,6 +315,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       ws.data.phase = "closed";
       ws.data.haWs?.close();
       ws.data.haWs = null;
+      ws.data.log.flush();
       unregister(ws);
     },
   };
@@ -278,6 +329,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       pending: new Map(),
       subscriptions: new Map(),
       lastId: 0,
+      log: new LogLimiter(() => `user ${data.userId}`),
     };
     if (server.upgrade(req, { data })) return undefined;
     return new Response("Expected a WebSocket upgrade", { status: 426 });
