@@ -62,6 +62,11 @@ describe("ws-filters", () => {
 
   test("filterPanels and filterServices", () => {
     expect(F.filterPanels({ lovelace: 1, "guest-dash": 2, secret: 3 }, "guest-dash")).toEqual({ "guest-dash": 2 });
-    expect(F.filterServices({ light: {}, notify: {}, homeassistant: {} }, new Set(["light"]))).toEqual({ light: {}, homeassistant: {} });
+    const services = { light: { turn_on: {}, reload: {} }, sensor: { reload: {} }, notify: { send: {} }, homeassistant: { turn_on: {}, restart: {} } };
+    expect(F.filterServices(services, new Set(["light", "sensor"]), (_domain, service) => service === "turn_on")).toEqual({
+      light: { turn_on: {} },
+      sensor: {},
+      homeassistant: { turn_on: {} },
+    });
   });
 });

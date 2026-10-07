@@ -325,8 +325,14 @@ describe("WebSocket proxy", () => {
     const panels = await ws.send({ type: "get_panels" });
     expect(Object.keys(panels.result as object)).toEqual(["guest-dash"]);
 
+    // Only what call_service accepts: no per-script or notify services, no camera.snapshot.
     const services = await ws.send({ type: "get_services" });
-    expect(Object.keys(services.result as object).sort()).toEqual(["homeassistant", "light", "lock"]);
+    expect(services.result).toEqual({
+      light: { turn_on: {}, turn_off: {}, toggle: {} },
+      lock: { lock: {}, unlock: {}, open: {} },
+      camera: { turn_on: {} },
+      homeassistant: { turn_on: {}, turn_off: {}, toggle: {} },
+    });
 
     const user = await ws.send({ type: "auth/current_user" });
     expect((user.result as { is_admin: boolean }).is_admin).toBe(false);
@@ -363,6 +369,23 @@ describe("WebSocket proxy", () => {
     // Still delivered, so the frontend fetches the scrubbed get_config again.
     expect((ev!.event as { event_type: string }).event_type).toBe("core_config_updated");
     expect((ev!.event as { data: object }).data).toEqual({});
+    ws.close();
+  });
+
+  test("service_registered and service_removed only announce services the guest may call", async () => {
+    const ws = await connect();
+    const registered = await ws.send({ type: "subscribe_events", event_type: "service_registered" });
+    const removed = await ws.send({ type: "subscribe_events", event_type: "service_removed" });
+    env.ha.emitEvent("service_registered", { domain: "script", service: "disarm_and_unlock_front_door" });
+    env.ha.emitEvent("service_registered", { domain: "notify", service: "mobile_app_owners_phone" });
+    env.ha.emitEvent("service_registered", { domain: "light", service: "reload" });
+    env.ha.emitEvent("service_registered", { domain: "light", service: "turn_on" });
+    env.ha.emitEvent("service_removed", { domain: "script", service: "wake_up" });
+    env.ha.emitEvent("service_removed", { domain: "lock", service: "open" });
+    const data = async (id: unknown, n: number) =>
+      (await ws.events(id as number, n)).map((m) => (m.event as { data: object }).data);
+    expect(await data(registered.id, 1)).toEqual([{ domain: "light", service: "turn_on" }]);
+    expect(await data(removed.id, 1)).toEqual([{ domain: "lock", service: "open" }]);
     ws.close();
   });
 

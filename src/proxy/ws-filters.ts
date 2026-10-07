@@ -136,12 +136,21 @@ export function scrubConfig(result: unknown): unknown {
   return copy;
 }
 
-/** get_services: { domain: { service: … } } → only domains the guest may use. */
-export function filterServices(result: unknown, domains: ReadonlySet<string>): unknown {
+/**
+ * get_services: { domain: { service: … } } → only domains the guest may use,
+ * and in them only the services `visible` lets through. A domain stays
+ * present even if none of its services do, as the frontend looks domains up.
+ */
+export function filterServices(
+  result: unknown,
+  domains: ReadonlySet<string>,
+  visible: (domain: string, service: string) => boolean,
+): unknown {
   if (!isObj(result)) return {};
   const out: Obj = {};
   for (const [domain, services] of Object.entries(result)) {
-    if (domain === "homeassistant" || domains.has(domain)) out[domain] = services;
+    if (domain !== "homeassistant" && !domains.has(domain)) continue;
+    out[domain] = isObj(services) ? Object.fromEntries(Object.entries(services).filter(([service]) => visible(domain, service))) : {};
   }
   return out;
 }
