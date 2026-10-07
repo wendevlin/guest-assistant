@@ -95,13 +95,17 @@ describe("auth surface", () => {
   });
 
   test("all non-essential better-auth endpoints are disabled", async () => {
+    // Asks better-auth directly: over HTTP the allowlist in front of it
+    // answers first (test/auth-sessions.test.ts), and this list is the
+    // second layer behind it.
     for (const path of DISABLED_AUTH_PATHS) {
       for (const method of ["GET", "POST"]) {
-        const res = await fetch(`${env.url}/api/auth${path}`, {
+        const req = new Request(`${env.url}/api/auth${path}`, {
           method,
           headers: { "content-type": "application/json", cookie, origin: env.url },
           body: method === "POST" ? "{}" : undefined,
         });
+        const res = await env.runtime.auth.handler(req);
         expect(res.status, `${method} ${path}`).toBe(404);
       }
     }

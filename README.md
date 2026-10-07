@@ -249,7 +249,7 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 ## Endpoints the frontend uses
 
 - Admin page: `/admin/` and its JSON API under `/admin/api/` (mutating calls need the header `x-guest-assistant: 1`)
-- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out`
+- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out` (the only better-auth endpoints that answer, each with exactly this method)
 - `GET /api/auth/hass-token` → `{ access_token, refresh_token, expires_in, dashboard_url_path }`
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
 - `GET /api/states`, `/api/camera_proxy/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`
