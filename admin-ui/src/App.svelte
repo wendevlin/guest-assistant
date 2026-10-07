@@ -68,6 +68,12 @@
 <div class="min-h-screen">
   <header class="border-b bg-card">
     <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 py-3">
+      <!-- Same drawing as public/icon.svg (the favicon and the app store icon). -->
+      <svg class="size-8 shrink-0" viewBox="90 90 320 320" aria-hidden="true">
+        <path fill="#18BCF2" d="M100 375 V265 Q100 245 114 231 L236 109 Q250 95 264 109 L386 231 Q400 245 400 265 V375 Q400 395 380 395 H120 Q100 395 100 375 Z" />
+        <path fill="#F2F4F9" d="M190 395 V262 Q190 238 214 238 H286 Q310 238 310 262 V395 Z" />
+        <g fill="#18BCF2"><circle cx="250" cy="290" r="24" /><path d="M206 395 V362 Q206 322 250 322 Q294 322 294 362 V395 Z" /></g>
+      </svg>
       <h1 class="min-w-0 flex-1 truncate text-lg font-medium">
         Guest Assistant <span class="font-normal text-muted-foreground">Admin</span>
       </h1>

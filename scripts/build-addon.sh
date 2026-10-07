@@ -56,7 +56,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/app/admin-ui"
 # Without `image` the Supervisor builds the Dockerfile instead of pulling the release image.
 grep -v '^image:' guest_assistant/config.yaml > "$OUT/config.yaml"
-cp guest_assistant/Dockerfile guest_assistant/README.md guest_assistant/DOCS.md "$OUT/"
+cp guest_assistant/Dockerfile guest_assistant/README.md guest_assistant/DOCS.md guest_assistant/icon.png guest_assistant/logo.png "$OUT/"
 cp -r package.json bun.lock tsconfig.json src "$OUT/app/"
 cp admin-ui/package.json "$OUT/app/admin-ui/"
 cp -r admin-ui/dist "$OUT/app/admin-ui/dist"

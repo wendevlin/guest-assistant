@@ -35,8 +35,13 @@ export function testEnvConfig(port: number): Env {
   };
 }
 
+/**
+ * Stays below Linux's ephemeral range (32768+), where the OS picks ports for
+ * outgoing connections; a port from there can already be taken (EADDRINUSE).
+ * The ingress port is `port + 1`, so it stays below as well.
+ */
 export function randomPort(): number {
-  return 30000 + Math.floor(Math.random() * 20000);
+  return 10000 + Math.floor(Math.random() * 22000);
 }
 
 /**
