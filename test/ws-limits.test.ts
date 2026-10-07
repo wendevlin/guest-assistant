@@ -375,3 +375,26 @@ describe("resource limits per guest connection", () => {
     });
   });
 });
+
+// ── GA-25: error texts from HA ──────────────────────────────────────────
+
+describe("condition subscriptions pass on the outcome only", () => {
+  // A template condition the admin wrote may read any entity. HA quotes its
+  // value in errors, e.g. when `| int` gets a state that is not a number.
+  const SECRET = "ValueError: Template error: int got invalid input 'code-1234' when rendering template \"{{ states('sensor.door_code') | int > 0 }}\"";
+  const filter = (event: unknown) => {
+    const dashboard = new Dashboard("guest-dash");
+    dashboard.applyConfig(GUEST_DASHBOARD);
+    return COMMANDS["subscribe_condition"]!.filterEvent!(event, { dashboard, subscriptions: new Map() }, {});
+  };
+
+  test("the result passes, template errors next to it do not", () => {
+    expect(filter({ result: true })).toEqual({ result: true });
+    expect(filter({ result: false, template_errors: [SECRET] })).toEqual({ result: false });
+  });
+
+  test("an error becomes a generic one, so the frontend still hides the card", () => {
+    expect(filter({ error: `In 'template' condition: ${SECRET}`, template_errors: [SECRET] })).toEqual({ error: "Condition could not be evaluated" });
+    expect(filter({ error: { code: "x", message: SECRET } })).toEqual({ error: "Condition could not be evaluated" });
+  });
+});

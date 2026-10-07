@@ -565,7 +565,18 @@ export const COMMANDS: Record<string, CommandSpec> = {
     validate: validateRenderTemplate,
   },
   // Dashboard visibility conditions, evaluated by HA (see dashboard/conditions.ts)
-  subscribe_condition: { fields: ["condition"], subscription: true, validate: validateSubscribeCondition },
+  subscribe_condition: {
+    fields: ["condition"],
+    subscription: true,
+    validate: validateSubscribeCondition,
+    // HA adds error texts, e.g. "int got invalid input 'abc'" from an admin's
+    // template condition, which quote entities outside the allowlist.
+    // Guests get the outcome only.
+    filterEvent: (event) =>
+      isObj(event) && event.error === undefined
+        ? { result: typeof event.result === "boolean" ? event.result : null }
+        : { error: "Condition could not be evaluated" },
+  },
   "media_source/resolve_media": {
     fields: ["media_content_id", "expires"],
     validate: (msg, ctx) =>
