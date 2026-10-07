@@ -37,25 +37,33 @@ describe("auth surface", () => {
     const guest = await env.runtime.createGuest({ username: "leaving", password: "leaving-pass-1", dashboard: "guest-dash" });
     // Signed in through the API, not the handler: better-auth's sign-in rate
     // limit is shared by every test in this process.
-    const signIn = await env.runtime.auth.api.signInUsername({ body: { username: "leaving", password: "leaving-pass-1" }, asResponse: true });
-    const c = signIn.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+    const signIn = async () => {
+      const res = await env.runtime.auth.api.signInUsername({ body: { username: "leaving", password: "leaving-pass-1" }, asResponse: true });
+      return res.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+    };
+    const c = await signIn();
+    const other = await signIn();
     const t = (await env.hassToken(c)).body.access_token as string;
+    const otherToken = (await env.hassToken(other)).body.access_token as string;
     const bearer = { authorization: `Bearer ${t}` };
+    const otherBearer = { authorization: `Bearer ${otherToken}` };
     expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: { cookie: c } })).status).toBe(200);
     expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(200);
 
-    // The session cookie stops working with the sign-out, not a minute later.
+    // The session cookie stops working with the sign-out, not a minute later,
+    // and so do the tokens issued for that session.
     const out = await fetch(`${env.url}/api/auth/sign-out`, { method: "POST", headers: { cookie: c, origin: env.url } });
     expect(out.status).toBe(200);
     expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: { cookie: c } })).status).toBe(401);
-    // The JWT is independent of the session ...
-    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(200);
+    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(401);
+    // The guest's other session keeps working ...
+    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: otherBearer })).status).toBe(200);
 
     // ... until the guest is changed or deleted.
     await env.runtime.deleteGuest(guest.id);
-    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(401);
+    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: otherBearer })).status).toBe(401);
     const ws = new GuestWs(env.wsUrl);
-    expect((await ws.auth(t)).type).toBe("auth_invalid");
+    expect((await ws.auth(otherToken)).type).toBe("auth_invalid");
     await ws.closed;
   });
 

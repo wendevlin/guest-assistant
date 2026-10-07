@@ -200,8 +200,9 @@ on their device only.
   proxy or Docker's port forwarding all guests share one address, so one
   misbehaving client can lock out the sign-in for everyone for a minute.
 - Deleting a guest, changing their password or dashboard ends their
-  connections and refuses the tokens they still hold. Sessions do not
-  survive a restart of the proxy.
+  connections and refuses the tokens they still hold. Signing out does the
+  same for that one device; the guest's other devices stay signed in.
+  Sessions do not survive a restart of the proxy.
 - This is alpha software. Read the "What a guest can do" table as the
   contract; anything not listed there is meant to be denied, and a way
   around it is a bug worth reporting.
