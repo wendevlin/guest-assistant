@@ -2,6 +2,7 @@
   import Check from "@lucide/svelte/icons/check";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Plus from "@lucide/svelte/icons/plus";
+  import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
@@ -76,8 +77,8 @@
   <div class="grid gap-4">
     <div class="flex flex-wrap items-center justify-between gap-4">
       <p class="max-w-2xl text-sm text-muted-foreground">
-        A guest dashboard is a permission: guests see and control exactly the entities on it. Dashboards with cards that cannot be analysed
-        are rejected.
+        A guest dashboard is a permission: guests see and control exactly the entities on it. Cards that cannot be checked are hidden from
+        guests.
       </p>
       <Button onclick={() => (adding = true)}><Plus class="size-4" />Add dashboard</Button>
     </div>
@@ -85,6 +86,14 @@
     {#if error}
       <Alert.Root variant="destructive"><Alert.Description>{error}</Alert.Description></Alert.Root>
     {/if}
+
+    {#each data.configured.filter((d) => d.status === "rejected") as d (d.id)}
+      <Alert.Root variant="warning">
+        <TriangleAlert />
+        <Alert.Title>Guests cannot use “{d.title}”</Alert.Title>
+        <Alert.Description>{d.violations.map((v) => v.message).join("; ")}</Alert.Description>
+      </Alert.Root>
+    {/each}
 
     {#if data.configured.length === 0}
       <p class="text-sm text-muted-foreground">No guest dashboards yet.</p>

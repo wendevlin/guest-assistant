@@ -9,6 +9,7 @@
 
 <div class="flex flex-wrap gap-1.5">
   {#if dashboard.pending}<Badge variant="warning">Open: {dashboard.pending}</Badge>{/if}
+  {#if dashboard.issues.length}<Badge variant="warning">Issues: {dashboard.issues.length}</Badge>{/if}
   {#if showGuests}<Badge variant="secondary">Guests: {dashboard.guests}</Badge>{/if}
   {#if dashboard.status === "ok"}<Badge variant="secondary">Entities: {dashboard.entities}</Badge>{/if}
   {#if !dashboard.enabled}

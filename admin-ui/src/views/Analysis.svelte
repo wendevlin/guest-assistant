@@ -1,4 +1,4 @@
-<!-- Why a dashboard is rejected, or the questions it raises and the conditions it uses. -->
+<!-- Why a dashboard cannot be used, or what is hidden from guests, the questions it raises and the conditions it uses. -->
 <script lang="ts">
   import type { DashboardView, QuestionView } from "$lib/api";
   import Questions from "./Questions.svelte";
@@ -18,8 +18,8 @@
 {#if dashboard.status === "rejected"}
   <section class="grid gap-3">
     <div>
-      <h3 class="font-medium">Why it is rejected</h3>
-      <p class="text-sm text-muted-foreground">Guests of this dashboard cannot sign in until these cards are changed in Home Assistant.</p>
+      <h3 class="font-medium">Guests cannot use this dashboard</h3>
+      <p class="text-sm text-muted-foreground">Until this is changed in Home Assistant, its guests only see that the dashboard is not available.</p>
     </div>
     <ul class="grid gap-2">
       {#each dashboard.violations as v, i (i)}
@@ -31,6 +31,28 @@
     </ul>
   </section>
 {:else}
+  {#if dashboard.issues.length > 0}
+    <section class="grid gap-3">
+      <div>
+        <h3 class="font-medium">Issues</h3>
+        <p class="text-sm text-muted-foreground">
+          These parts cannot be checked, so guests do not get them. Everything else on the dashboard works. Change them in Home Assistant
+          to make them available to guests.
+        </p>
+      </div>
+      <ul class="grid gap-2">
+        {#each dashboard.issues as issue, i (i)}
+          <li class="grid gap-1 rounded-lg border border-warning/30 p-3 text-sm">
+            <span>{issue.message}</span>
+            <span class="text-xs text-muted-foreground">
+              {issue.effect === "hidden" ? "Hidden from guests:" : "Does nothing for guests:"}
+              <code class="font-mono break-all">{issue.hidden}</code>
+            </span>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
   <section class="grid gap-3">
     <div>
       <h3 class="font-medium">Your decisions</h3>
