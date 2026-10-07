@@ -152,7 +152,10 @@ There is no configuration file. Everything is managed on the admin page.
 Later admin logins go through Home Assistant's login again, and only HA
 administrators get in. Admin sessions live in memory, so a restart asks you
 to sign in again. "Connect a different Home Assistant" in the settings runs
-steps 2 to 4 again and replaces the proxy's old HA user.
+steps 2 to 4 again. In the same Home Assistant it replaces the proxy's old HA
+user. In a different one the proxy revokes its old token in the old Home
+Assistant, but cannot delete the old user there: an administrator of the old
+Home Assistant has to, and the log names the user.
 
 **As a Home Assistant app** the Supervisor token acts as administrator, so
 set-up needs no input. The admin page is only reachable through ingress. See
