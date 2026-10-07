@@ -48,7 +48,8 @@ interface CoreUser {
   group_ids: string[];
 }
 
-const ADMIN_CACHE_MS = 60_000;
+/** Short, so an admin who loses admin rights in HA loses the admin page within seconds. */
+const ADMIN_CACHE_MS = 10_000;
 const adminCache = new Map<string, { admin: boolean; name: string; until: number }>();
 
 /**
