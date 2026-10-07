@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
+import { Dashboard } from "../src/dashboard";
+import { COMMANDS, evaluate, type CommandContext, type CommandSpec } from "../src/proxy/ws-commands";
 import { GuestWs, startTestEnv, type TestEnv } from "./helpers";
+import { GUEST_DASHBOARD } from "./mock-ha";
 
 type Msg = Record<string, unknown>;
 
@@ -127,6 +130,91 @@ describe("warnings a guest causes are rate limited", () => {
       expect(line).not.toContain("\n");
       expect(line!.length).toBeLessThan(400);
       await guest.close();
+    });
+  });
+});
+
+// ── GA-08: guest-chosen keys and throwing checks ────────────────────────
+
+describe("guest-chosen keys never reach Object.prototype", () => {
+  const dashboard = new Dashboard("guest-dash");
+  dashboard.applyConfig(GUEST_DASHBOARD);
+  const ctx: CommandContext = { dashboard, subscriptions: new Map() };
+  const inherited = ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"];
+
+  test("command types inherited from Object.prototype are rejected", () => {
+    for (const type of inherited) expect(evaluate({ id: 1, type }, ctx)).toMatchObject({ kind: "reject" });
+  });
+
+  test("call_service with an inherited domain is rejected instead of throwing", () => {
+    for (const domain of inherited) {
+      const msg = { id: 1, type: "call_service", domain, service: "toggle", target: { entity_id: "light.kitchen" } };
+      expect(evaluate(msg, ctx)).toMatchObject({ kind: "reject" });
+    }
+  });
+
+  test("over the WebSocket both are refused by the proxy and nothing reaches HA", async () => {
+    const guest = await Guest.connect();
+    const calls = env.ha.serviceCalls.length;
+    const [type, domain, ping] = await guest.burst([
+      { type: "constructor" },
+      { type: "call_service", domain: "constructor", service: "toggle", target: { entity_id: "light.kitchen" } },
+      { type: "ping" },
+    ]);
+    // HA would have answered an unknown command with "unknown_command".
+    expect(type?.error).toEqual({ code: "unauthorized", message: "Operation not permitted" });
+    expect(domain?.error).toEqual({ code: "unauthorized", message: "Operation not permitted" });
+    expect(ping?.type).toBe("pong");
+    expect(env.ha.serviceCalls.length).toBe(calls);
+    await guest.close();
+  });
+});
+
+describe("a check or filter that throws", () => {
+  /** Replaces a part of a command's spec for the duration of `fn`. */
+  async function patched<K extends keyof CommandSpec>(type: string, key: K, value: CommandSpec[K], fn: () => Promise<void>): Promise<void> {
+    const spec = COMMANDS[type]!;
+    const original = spec[key];
+    spec[key] = value;
+    try {
+      await fn();
+    } finally {
+      spec[key] = original;
+    }
+  }
+  const boom = () => {
+    throw new Error("boom");
+  };
+
+  test("a check that throws answers the guest with an error and keeps the connection", async () => {
+    await captureWarnings(async (lines) => {
+      await patched("get_config", "validate", boom, async () => {
+        const guest = await Guest.connect();
+        const [failed, ping] = await guest.burst([{ type: "get_config" }, { type: "ping" }]);
+        expect(failed).toMatchObject({ type: "result", success: false, error: { code: "unknown_error", message: "Unknown error" } });
+        expect(ping?.type).toBe("pong");
+        expect(lines()).toContainEqual(expect.stringContaining("error checking get_config"));
+        await guest.close();
+      });
+    });
+  });
+
+  test("a filter that throws drops HA's answer instead of passing it on unfiltered", async () => {
+    await captureWarnings(async () => {
+      await patched("get_states", "filterResult", boom, async () => {
+        await patched("subscribe_entities", "filterEvent", boom, async () => {
+          const guest = await Guest.connect();
+          const [states, subscribed, ping] = await guest.burst([{ type: "get_states" }, { type: "subscribe_entities" }, { type: "ping" }]);
+          expect(states).toMatchObject({ type: "result", success: false, error: { code: "unknown_error" } });
+          expect(subscribed).toMatchObject({ type: "result", success: true });
+          expect(ping?.type).toBe("pong");
+          await Bun.sleep(50);
+          // mock HA sends every state, and an event right after subscribe_entities
+          expect(JSON.stringify(guest.ws.received)).not.toContain("light.bedroom");
+          expect(guest.ws.received.filter((m) => m.type === "event")).toEqual([]);
+          await guest.close();
+        });
+      });
     });
   });
 });

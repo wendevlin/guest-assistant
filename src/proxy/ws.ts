@@ -2,7 +2,7 @@ import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import type { Dashboard } from "../dashboard";
 import { haWsUrl, type HaEndpoint } from "../ha/endpoint";
 import { verifyJWT } from "../jwt";
-import { COMMANDS, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand } from "./ws-commands";
+import { commandSpec, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand, type Verdict } from "./ws-commands";
 
 type Phase = "awaiting_auth" | "connecting_ha" | "active" | "closed";
 
@@ -206,7 +206,16 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     ws.data.lastId = id;
 
     const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
-    const verdict = evaluate(msg, ctx);
+    let verdict: Verdict;
+    try {
+      verdict = evaluate(msg, ctx);
+    } catch (err) {
+      // A bug in a check must still answer the guest: an exception escaping
+      // this handler makes Bun drop the socket without a reply.
+      ws.data.log.warn(`[ws-proxy] error checking ${String(msg.type)} from user ${ws.data.userId}: ${String(err)}`);
+      sendError(ws, id, "Unknown error", "unknown_error");
+      return;
+    }
 
     switch (verdict.kind) {
       case "reject":
@@ -246,13 +255,20 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       const tracked = ws.data.pending.get(id);
       ws.data.pending.delete(id);
       if (!tracked) return; // never forward results we did not ask for
-      const spec = COMMANDS[tracked.type];
-      if (msg.success && spec?.subscription) ws.data.subscriptions.set(id, tracked);
+      const spec = commandSpec(tracked.type);
+      let out = msg;
       if (msg.success && spec?.filterResult) {
-        send(ws, { ...msg, result: spec.filterResult(msg.result, ctx, tracked.msg) });
-      } else {
-        send(ws, msg);
+        try {
+          out = { ...msg, result: spec.filterResult(msg.result, ctx, tracked.msg) };
+        } catch (err) {
+          // Never pass HA's answer on unfiltered; an error lets the guest stop waiting.
+          ws.data.log.warn(`[ws-proxy] error filtering ${tracked.type} for user ${ws.data.userId}: ${String(err)}`);
+          sendError(ws, id, "Unknown error", "unknown_error");
+          return;
+        }
       }
+      if (msg.success && spec?.subscription) ws.data.subscriptions.set(id, tracked);
+      send(ws, out);
       return;
     }
 
@@ -266,9 +282,16 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     if (msg.type === "event") {
       const tracked = ws.data.subscriptions.get(id);
       if (!tracked) return;
-      const spec = COMMANDS[tracked.type];
+      const spec = commandSpec(tracked.type);
       if (spec?.filterEvent) {
-        const filtered = spec.filterEvent(msg.event, ctx, tracked.msg);
+        let filtered: unknown;
+        try {
+          filtered = spec.filterEvent(msg.event, ctx, tracked.msg);
+        } catch (err) {
+          // Dropped: never passed on unfiltered.
+          ws.data.log.warn(`[ws-proxy] error filtering ${tracked.type} for user ${ws.data.userId}: ${String(err)}`);
+          return;
+        }
         if (filtered === DROP) return;
         send(ws, { ...msg, event: filtered });
       } else {

@@ -103,6 +103,14 @@ function keyIn(allowed: readonly string[]) {
   };
 }
 
+/**
+ * table[key] for own keys only. Keys come from guests, and a plain lookup of
+ * e.g. "constructor" finds Object.prototype's.
+ */
+function lookup<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 const A = (ctx: CommandContext) => ctx.dashboard.entities;
 
 // ── subscribe_events ─────────────────────────────────────────────────────
@@ -274,10 +282,10 @@ function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
     // where the per-service checks below would not run.
     if (serviceData && Object.keys(serviceData).length > 0) return reject("service_data not allowed for homeassistant services");
   } else {
-    const allowed = ENTITY_SERVICES[domain];
+    const allowed = lookup(ENTITY_SERVICES, domain);
     if (!allowed || !allowed.includes(service)) return reject("service not allowed");
     if (!ids.every((id) => entityDomain(id) === domain)) return reject("target domain mismatch");
-    const check = SERVICE_DATA_CHECKS[`${domain}.${service}`];
+    const check = lookup(SERVICE_DATA_CHECKS, `${domain}.${service}`);
     const error = check?.(serviceData ?? {}, ctx, ids);
     if (error) return reject(error);
   }
@@ -581,7 +589,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
 export function evaluate(msg: Obj, ctx: CommandContext): Verdict {
   const type = msg.type;
   if (typeof type !== "string") return reject("type required");
-  const spec = COMMANDS[type];
+  const spec = commandSpec(type);
   if (!spec) return reject(`command "${type}" not permitted`);
 
   const picked: Obj = { id: msg.id, type };
@@ -592,4 +600,9 @@ export function evaluate(msg: Obj, ctx: CommandContext): Verdict {
   }
 
   return spec.validate ? spec.validate(picked, ctx) : forward(picked);
+}
+
+/** The table entry for a command type; never one inherited from Object.prototype. */
+export function commandSpec(type: string): CommandSpec | undefined {
+  return lookup(COMMANDS, type);
 }
