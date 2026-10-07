@@ -53,14 +53,19 @@ export class Store {
 
   static open(dataDir: string): Store {
     // The database holds the HA token, session tokens and password hashes.
+    // mkdirSync's mode only applies to a directory it creates, so an existing
+    // one (the app's /data, older installs) is tightened on every start.
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    chmodSync(dataDir, 0o700);
     const path = join(dataDir, "guest-assistant.db");
+    // The constructor's statements make SQLite create the WAL and SHM files,
+    // with the database file's mode; ones it creates later copy the 0600.
     const store = new Store(path);
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
         chmodSync(path + suffix, 0o600);
-      } catch {
-        // The WAL files appear with the first write; the directory mode covers them.
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       }
     }
     return store;

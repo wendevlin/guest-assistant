@@ -191,8 +191,9 @@ on their device only.
 ## What to know before exposing it
 
 - The database in `DATA_DIR` holds the proxy's HA token, the guests' password
-  hashes and their sessions. It is created with mode 0600 in a 0700
-  directory; whoever can read it can act as the proxy's HA user.
+  hashes and their sessions. On every start the proxy sets the directory to
+  mode 0700 and the database files to 0600, and does not start if it cannot;
+  whoever can read them can act as the proxy's HA user.
 - The setup code is printed to the log and stays valid until set-up is done.
   Anyone who can read the log can start the set-up (they still need HA admin
   credentials to finish it).
