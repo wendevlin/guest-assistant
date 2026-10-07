@@ -193,7 +193,9 @@ on their device only.
 - The database in `DATA_DIR` holds the proxy's HA token, the guests' password
   hashes and their sessions. On every start the proxy sets the directory to
   mode 0700 and the database files to 0600, and does not start if it cannot;
-  whoever can read them can act as the proxy's HA user.
+  whoever can read them can act as the proxy's HA user. The app image runs
+  the proxy as the unprivileged user `bun` (uid 1000) and hands `DATA_DIR` to
+  that user first.
 - The setup code is printed to the log and stays valid until set-up is done.
   Anyone who can read the log can start the set-up (they still need HA admin
   credentials to finish it).
