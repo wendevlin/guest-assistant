@@ -21,7 +21,16 @@ export interface PendingOAuth {
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SETUP_SESSION_TTL_MS = 30 * 60 * 1000;
 const OAUTH_TTL_MS = 10 * 60 * 1000;
-const CODE_ATTEMPTS_PER_MINUTE = 10;
+/** A printed code stops working after this; a fresh one is printed instead. */
+const SETUP_CODE_TTL_MS = 60 * 60 * 1000;
+/** Wrong guesses are limited per client address, so one client cannot lock out the admin. */
+const CODE_ATTEMPTS_PER_CLIENT = 10;
+/**
+ * Ceiling for all addresses together, so many addresses (e.g. an IPv6
+ * prefix) cannot guess faster: at 60 a minute, an hourly code out of 10^8
+ * is hit with a chance of about 1 in 28,000.
+ */
+const CODE_ATTEMPTS_TOTAL = 60;
 const MAX_PENDING_OAUTH = 200;
 
 export const ADMIN_COOKIE = "ga_admin";
@@ -34,23 +43,50 @@ export const OAUTH_COOKIE = "ga_oauth";
 export class AdminSessions {
   private sessions = new Map<string, AdminSession>();
   private oauth = new Map<string, PendingOAuth>();
-  private codeAttempts: number[] = [];
+  /** Times of the guesses in the last minute, per client address. */
+  private codeAttempts = new Map<string, number[]>();
   /** One-time code printed to the log while the proxy is not set up (standalone only). */
   setupCode: string | null = null;
+  private setupCodeExpires = 0;
+
+  constructor(private readonly setupCodeTtlMs = SETUP_CODE_TTL_MS) {}
 
   newSetupCode(): string {
     const digits = Array.from({ length: 8 }, () => randomInt(10)).join("");
     this.setupCode = `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    this.setupCodeExpires = Date.now() + this.setupCodeTtlMs;
     return this.setupCode;
   }
 
-  /** Rate-limited, constant-time check of the setup code. */
-  checkSetupCode(input: string): "ok" | "wrong" | "throttled" {
+  /**
+   * Creates a setup code and hands it to `announce` (the log). Until set-up
+   * is done, a fresh code replaces it when it expires (after an hour), so a
+   * code from an old log does not stay valid forever.
+   */
+  startSetupCodes(announce: (code: string) => void): void {
+    announce(this.newSetupCode());
+    const timer = setInterval(() => {
+      if (this.setupCode) announce(this.newSetupCode());
+      else clearInterval(timer);
+    }, this.setupCodeTtlMs);
+    timer.unref();
+  }
+
+  /** Rate-limited (per client address), constant-time check of the setup code. */
+  checkSetupCode(input: string, client: string): "ok" | "wrong" | "throttled" {
     const now = Date.now();
-    this.codeAttempts = this.codeAttempts.filter((t) => now - t < 60_000);
-    if (this.codeAttempts.length >= CODE_ATTEMPTS_PER_MINUTE) return "throttled";
-    this.codeAttempts.push(now);
-    if (!this.setupCode) return "wrong";
+    let total = 0;
+    for (const [address, times] of this.codeAttempts) {
+      const recent = times.filter((t) => now - t < 60_000);
+      if (recent.length) this.codeAttempts.set(address, recent);
+      else this.codeAttempts.delete(address);
+      total += recent.length;
+    }
+    // Only admitted guesses are recorded, so the map holds at most CODE_ATTEMPTS_TOTAL entries.
+    const mine = this.codeAttempts.get(client) ?? [];
+    if (mine.length >= CODE_ATTEMPTS_PER_CLIENT || total >= CODE_ATTEMPTS_TOTAL) return "throttled";
+    this.codeAttempts.set(client, [...mine, now]);
+    if (!this.setupCode || now >= this.setupCodeExpires) return "wrong";
     const a = Buffer.from(input.replace(/\D/g, ""));
     const b = Buffer.from(this.setupCode.replace(/\D/g, ""));
     return a.length === b.length && timingSafeEqual(a, b) ? "ok" : "wrong";

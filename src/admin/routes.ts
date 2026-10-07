@@ -222,7 +222,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
 
   // ── API ───────────────────────────────────────────────────────────────
 
-  async function api(req: Request, path: string, identity: Identity | null): Promise<Response> {
+  async function api(req: Request, path: string, identity: Identity | null, server: Server<unknown>): Promise<Response> {
     const method = req.method;
     const route = `${method} ${path}`;
     if (method !== "GET" && req.headers.get(CSRF_HEADER) !== "1") throw new HttpError(403, "Missing request header");
@@ -234,9 +234,12 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       case "POST setup/code": {
         if (appMode || runtime.haSettings) throw new HttpError(409, "Already set up");
         const { code } = await body(req, CodeInput);
-        const result = sessions.checkSetupCode(code);
+        // Throttled per TCP peer: a stranger's guesses do not lock out the admin.
+        // Behind a reverse proxy all clients share its address.
+        const client = server.requestIP(req)?.address.replace(/^::ffff:/, "") ?? "";
+        const result = sessions.checkSetupCode(code, client);
         if (result === "throttled") throw new HttpError(429, "Too many attempts, wait a minute");
-        if (result === "wrong") throw new HttpError(403, "Wrong setup code");
+        if (result === "wrong") throw new HttpError(403, "Wrong or expired setup code. Use the newest one in the log.");
         const session = sessions.create("setup", "setup");
         return json({ ok: true }, 200, {
           "set-cookie": cookie(ADMIN_COOKIE, session.id, { path: base, secure: browserOrigin(req).startsWith("https:") }),
@@ -344,7 +347,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
     const path = url.pathname.slice(base.length);
 
     try {
-      if (path.startsWith("api/")) return await api(req, path.slice(4), await identify(req, server));
+      if (path.startsWith("api/")) return await api(req, path.slice(4), await identify(req, server), server);
       if (req.method !== "GET" && req.method !== "HEAD") return new Response("Method Not Allowed", { status: 405 });
       if (path === "callback" && !appMode) return await oauthCallback(req);
       return await serveAsset(path);

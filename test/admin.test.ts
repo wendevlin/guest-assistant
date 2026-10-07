@@ -506,7 +506,7 @@ describe("connection safety", () => {
   test("setup codes are rate limited", () => {
     const sessions = new AdminSessions();
     const code = sessions.newSetupCode();
-    for (let i = 0; i < 10; i++) expect(sessions.checkSetupCode("1111-1111")).toBe("wrong");
-    expect(sessions.checkSetupCode(code)).toBe("throttled");
+    for (let i = 0; i < 10; i++) expect(sessions.checkSetupCode("1111-1111", "192.0.2.1")).toBe("wrong");
+    expect(sessions.checkSetupCode(code, "192.0.2.1")).toBe("throttled");
   });
 });

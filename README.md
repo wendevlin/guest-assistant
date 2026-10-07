@@ -134,7 +134,8 @@ There is no configuration file. Everything is managed on the admin page.
 **Standalone** (Docker, a server next to HA, development):
 
 1. Start the proxy. The log prints a one-time setup code and the admin page,
-   `http://<proxy>:3001/admin/`.
+   `http://<proxy>:3001/admin/`. A code is valid for an hour; until set-up is
+   done, a new one is printed every hour.
 2. Enter the code, then pick your Home Assistant. The proxy looks for
    instances on the network (zeroconf; needs host networking in Docker) and
    tries every address each one announces. You can also type an address.
@@ -193,9 +194,11 @@ on their device only.
 - The database in `DATA_DIR` holds the proxy's HA token, the guests' password
   hashes and their sessions. It is created with mode 0600 in a 0700
   directory; whoever can read it can act as the proxy's HA user.
-- The setup code is printed to the log and stays valid until set-up is done.
-  Anyone who can read the log can start the set-up (they still need HA admin
-  credentials to finish it).
+- The setup code is printed to the log and is valid for an hour; until set-up
+  is done, a new one is printed every hour. Anyone who can read the log can
+  start the set-up (they still need HA admin credentials to finish it). Wrong
+  codes are limited to 10 a minute per client address and 60 a minute in
+  total.
 - Sign-in attempts are rate-limited per client address. Behind a reverse
   proxy or Docker's port forwarding all guests share one address, so one
   misbehaving client can lock out the sign-in for everyone for a minute.

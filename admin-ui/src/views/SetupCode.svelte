@@ -30,7 +30,7 @@
 <Card.Root>
   <Card.Header>
     <Card.Title class="text-xl">Set up Guest Assistant</Card.Title>
-    <Card.Description>To make sure you are the one setting up this proxy, enter the setup code. It is printed in the log of Guest Assistant.</Card.Description>
+    <Card.Description>To make sure you are the one setting up this proxy, enter the setup code. It is printed in the log of Guest Assistant and changes every hour.</Card.Description>
   </Card.Header>
   <Card.Content>
     <form class="grid gap-4" onsubmit={submit}>
