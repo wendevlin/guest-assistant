@@ -148,6 +148,11 @@ export class GuestWs {
     });
   }
 
+  /** Sends the message exactly as given, including its id; answers land in `received`. */
+  sendRaw(msg: Record<string, unknown>): void {
+    this.ws.send(JSON.stringify(msg));
+  }
+
   send(msg: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = this.nextId++;
     return new Promise((resolve) => {

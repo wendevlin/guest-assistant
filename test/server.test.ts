@@ -237,6 +237,61 @@ describe("WebSocket proxy", () => {
     return ws;
   }
 
+  test("a reused message id never lets an answer skip its filter", async () => {
+    const ws = await connect();
+    // Each command is followed at once by a ping with the same id. Before ids
+    // had to increase, the ping replaced the command in the pending map and
+    // HA's unfiltered answer went straight to the guest.
+    const commands: Record<number, Record<string, unknown>> = {
+      110: { type: "get_states" },
+      120: { type: "history/history_during_period", entity_ids: ["light.kitchen"], start_time: "2026-01-01T00:00:00Z" },
+      130: { type: "get_panels" },
+    };
+    for (const [id, cmd] of Object.entries(commands)) {
+      ws.sendRaw({ id: Number(id), ...cmd });
+      ws.sendRaw({ id: Number(id), type: "ping" });
+    }
+    await Bun.sleep(300);
+    const answers = ws.received.filter((m) => typeof m.id === "number" && m.id >= 110);
+    const ok = new Map(answers.filter((m) => m.success === true).map((m) => [m.id as number, m.result]));
+
+    expect((ok.get(110) as Array<{ entity_id: string }>).map((s) => s.entity_id).sort()).toEqual(["camera.garden", "light.kitchen", "lock.front"]);
+    expect(Object.keys(ok.get(120) as object)).toEqual(["light.kitchen"]);
+    expect(Object.keys(ok.get(130) as object)).toEqual(["guest-dash"]);
+    const refused = answers.filter((m) => (m.error as { code?: string } | undefined)?.code === "id_reuse").map((m) => m.id);
+    expect(refused).toEqual([110, 120, 130]);
+    expect(answers.some((m) => m.type === "pong")).toBe(false);
+    ws.close();
+  });
+
+  test("message ids must be increasing integers", async () => {
+    const ws = await connect();
+    for (const id of [5, 3, 5, 6, 6.5, -1]) ws.sendRaw({ id, type: "ping" });
+    await Bun.sleep(300);
+    expect(ws.received.filter((m) => m.type === "pong").map((m) => m.id)).toEqual([5, 6]);
+    const errors = ws.received.filter((m) => m.type === "result" && m.success === false);
+    expect(errors.map((m) => [m.id, (m.error as { code: string }).code])).toEqual([
+      [3, "id_reuse"],
+      [5, "id_reuse"],
+      [6.5, "unauthorized"],
+      [-1, "unauthorized"],
+    ]);
+    ws.close();
+  });
+
+  test("a live subscription's id cannot be taken over", async () => {
+    const ws = await connect();
+    ws.sendRaw({ id: 50, type: "subscribe_entities" });
+    await Bun.sleep(200);
+    ws.sendRaw({ id: 50, type: "subscribe_events", event_type: "themes_updated" });
+    ws.sendRaw({ id: 51, type: "unsubscribe_events", subscription: 50 });
+    await Bun.sleep(200);
+    const reuse = ws.received.find((m) => m.id === 50 && (m.error as { code?: string } | undefined)?.code === "id_reuse");
+    expect(reuse).toBeDefined();
+    expect(ws.received.find((m) => m.id === 51)?.success).toBe(true);
+    ws.close();
+  });
+
   test("rejects invalid tokens", async () => {
     const ws = new GuestWs(env.wsUrl);
     const res = await ws.auth("nonsense");
