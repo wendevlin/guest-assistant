@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Dashboard } from "../src/dashboard";
+import * as limits from "../src/proxy/ws";
 import { COMMANDS, evaluate, type CommandContext, type CommandSpec } from "../src/proxy/ws-commands";
 import { GuestWs, startTestEnv, type TestEnv } from "./helpers";
 import { GUEST_DASHBOARD } from "./mock-ha";
@@ -9,10 +10,19 @@ type Msg = Record<string, unknown>;
 let env: TestEnv;
 let token: string;
 
+/**
+ * A hass-token for the guest. Signed in through the API, not the HTTP
+ * handler: better-auth's sign-in rate limit is shared by every test file.
+ */
+async function hassToken(username: string, password: string): Promise<string> {
+  const signIn = await env.runtime.auth.api.signInUsername({ body: { username, password }, asResponse: true });
+  const cookie = signIn.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  return (await env.hassToken(cookie)).body.access_token as string;
+}
+
 beforeAll(async () => {
   env = await startTestEnv();
-  const cookie = await env.login("guest", "guest-pass-123");
-  token = (await env.hassToken(cookie)).body.access_token as string;
+  token = await hassToken("guest", "guest-pass-123");
 });
 
 afterAll(() => env.stop());
@@ -34,9 +44,9 @@ class Guest {
 
   private constructor(readonly ws: GuestWs) {}
 
-  static async connect(): Promise<Guest> {
+  static async connect(accessToken = token): Promise<Guest> {
     const ws = new GuestWs(env.wsUrl);
-    expect((await ws.auth(token)).type).toBe("auth_ok");
+    expect((await ws.auth(accessToken)).type).toBe("auth_ok");
     return new Guest(ws);
   }
 
@@ -56,6 +66,12 @@ class Guest {
     const started = performance.now();
     while (answers().includes(undefined) && performance.now() - started < timeoutMs) await Bun.sleep(5);
     return answers();
+  }
+
+  /** Whether some command got two answers, e.g. the proxy's refusal and HA's result. */
+  answeredTwice(): boolean {
+    const ids = this.ws.received.filter((m) => typeof m.id === "number" && m.type !== "event").map((m) => m.id);
+    return new Set(ids).size !== ids.length;
   }
 
   close(): Promise<void> {
@@ -215,6 +231,147 @@ describe("a check or filter that throws", () => {
           await guest.close();
         });
       });
+    });
+  });
+});
+
+// ── GA-07: resource limits ──────────────────────────────────────────────
+
+describe("resource limits per guest connection", () => {
+  const SUBSCRIBE = { type: "subscribe_events", event_type: "state_changed" };
+  const PING = { type: "ping" };
+  const TOGGLE = { type: "call_service", domain: "light", service: "toggle", target: { entity_id: "light.kitchen" } };
+  const times = (n: number, msg: Msg): Msg[] => Array.from({ length: n }, () => msg);
+
+  test("a connect burst like the frontend's passes; a flood beyond it is refused, not forwarded", async () => {
+    freezeClock();
+    await captureWarnings(async () => {
+      const guest = await Guest.connect();
+      // After connecting the frontend sends 30-60 commands, then a large
+      // dashboard subscribes 100+ times (conditions, templates, history).
+      const startup = await guest.burst([...times(60, { type: "get_config" }), ...times(150, SUBSCRIBE)]);
+      expect(startup.every((a) => a?.success === true)).toBe(true);
+
+      const flood = await guest.burst(times(limits.SEND_BURST, PING));
+      const passed = limits.SEND_BURST - startup.length;
+      expect(flood.slice(0, passed).every((a) => a?.type === "pong")).toBe(true);
+      expect(flood.slice(passed).every((a) => errorCode(a) === "rate_limited")).toBe(true);
+      expect(flood.at(-1)?.error).toEqual({ code: "rate_limited", message: "Too many requests, try again in a moment" });
+
+      // Answered by the proxy itself, and unsubscribing: neither is limited.
+      const [user, unsubscribed] = await guest.burst([{ type: "auth/current_user" }, { type: "unsubscribe_events", subscription: startup[60]!.id }]);
+      expect(user?.success).toBe(true);
+      expect(unsubscribed?.success).toBe(true);
+
+      // The bucket refills over time.
+      advanceClock(1000);
+      const later = await guest.burst(times(limits.SEND_PER_SECOND + 1, PING));
+      expect(later.map((a) => a?.type === "pong")).toEqual([...Array(limits.SEND_PER_SECOND).fill(true), false]);
+
+      await Bun.sleep(50);
+      expect(guest.answeredTwice()).toBe(false);
+      await guest.close();
+    });
+  });
+
+  test("service calls have a stricter limit of their own that leaves other commands alone", async () => {
+    freezeClock();
+    await captureWarnings(async () => {
+      const guest = await Guest.connect();
+      const calls = env.ha.serviceCalls.length;
+      const answers = await guest.burst(times(100, TOGGLE));
+      expect(answers.slice(0, limits.CALL_SERVICE_BURST).every((a) => a?.success === true)).toBe(true);
+      expect(answers.slice(limits.CALL_SERVICE_BURST).every((a) => errorCode(a) === "rate_limited")).toBe(true);
+      expect(env.ha.serviceCalls.length - calls).toBe(limits.CALL_SERVICE_BURST);
+
+      // Refused calls took nothing from what the rest of the dashboard needs.
+      const others = await guest.burst(times(limits.SEND_BURST - limits.CALL_SERVICE_BURST, PING));
+      expect(others.every((a) => a?.type === "pong")).toBe(true);
+
+      advanceClock(1000);
+      const later = await guest.burst(times(limits.CALL_SERVICE_PER_SECOND + 1, TOGGLE));
+      expect(later.map((a) => a?.success)).toEqual([...Array(limits.CALL_SERVICE_PER_SECOND).fill(true), false]);
+      expect(env.ha.serviceCalls.length - calls).toBe(limits.CALL_SERVICE_BURST + limits.CALL_SERVICE_PER_SECOND);
+      await guest.close();
+    });
+  });
+
+  test("subscriptions are capped, counting those HA has not confirmed yet", async () => {
+    freezeClock();
+    await captureWarnings(async () => {
+      const guest = await Guest.connect();
+      const accepted: number[] = [];
+      // Up to 50 below the cap, in batches the rate limit lets through.
+      for (let remaining = limits.MAX_SUBSCRIPTIONS - 50; remaining > 0; remaining -= 200) {
+        const answers = await guest.burst(times(Math.min(remaining, 200), SUBSCRIBE));
+        expect(answers.every((a) => a?.success === true)).toBe(true);
+        accepted.push(...answers.map((a) => a!.id as number));
+        advanceClock(60_000);
+      }
+      // Sent at once: when the 51st is checked, the 50 before it are unconfirmed.
+      const last = await guest.burst(times(100, SUBSCRIBE));
+      expect(last.slice(0, 50).every((a) => a?.success === true)).toBe(true);
+      expect(last.slice(50).every((a) => errorCode(a) === "too_many_subscriptions")).toBe(true);
+
+      // Unsubscribing frees a slot; subscriptions the proxy answers itself hold none.
+      const [unsubscribed, again, over, local] = await guest.burst([
+        { type: "unsubscribe_events", subscription: accepted[0] },
+        SUBSCRIBE,
+        SUBSCRIBE,
+        { type: "frontend/subscribe_user_data", key: "language" },
+      ]);
+      expect(unsubscribed?.success).toBe(true);
+      expect(again?.success).toBe(true);
+      expect(over?.error).toEqual({ code: "too_many_subscriptions", message: "Too many subscriptions" });
+      expect(local?.success).toBe(true);
+      expect(guest.answeredTwice()).toBe(false);
+      await guest.close();
+    });
+  });
+
+  test("commands waiting for HA are capped; unsubscribing still goes through", async () => {
+    freezeClock();
+    await captureWarnings(async () => {
+      const guest = await Guest.connect();
+      const [subscribed] = await guest.burst([SUBSCRIBE]);
+      const icons = { type: "frontend/get_icons", category: "entity_component" };
+      env.ha.unanswered.add(icons.type);
+      try {
+        for (let remaining = limits.MAX_PENDING; remaining > 0; remaining -= 200) {
+          // Forwarded: HA keeps them waiting, so there is no answer.
+          const answers = await guest.burst(times(Math.min(remaining, 200), icons), 100);
+          expect(answers.every((a) => a === undefined)).toBe(true);
+          advanceClock(60_000);
+        }
+        const [over, ping, unsubscribed] = await guest.burst([icons, PING, { type: "unsubscribe_events", subscription: subscribed!.id }]);
+        expect(over?.error).toEqual({ code: "too_many_pending", message: "Too many commands waiting for Home Assistant" });
+        expect(errorCode(ping)).toBe("too_many_pending");
+        expect(unsubscribed?.success).toBe(true);
+      } finally {
+        env.ha.unanswered.delete(icons.type);
+      }
+      await guest.close();
+    });
+  });
+
+  test("a guest account keeps its newest connections; the oldest one is closed", async () => {
+    const username = "many_tabs";
+    const password = "many-tabs-pass-1";
+    await env.runtime.createGuest({ username, password, dashboard: "guest-dash" });
+    const own = await hassToken(username, password);
+
+    await captureWarnings(async (lines) => {
+      const guests: Guest[] = [];
+      for (let i = 0; i < limits.MAX_CONNECTIONS_PER_USER; i++) guests.push(await Guest.connect(own));
+      let oldestClosed = false;
+      void guests[0]!.ws.closed.then(() => (oldestClosed = true));
+
+      guests.push(await Guest.connect(own));
+      await until(() => oldestClosed);
+      expect(oldestClosed).toBe(true);
+      for (const guest of guests.slice(1)) expect((await guest.burst([PING]))[0]?.type).toBe("pong");
+      expect(lines()).toContainEqual(expect.stringContaining(`more than ${limits.MAX_CONNECTIONS_PER_USER} connections; closing the oldest`));
+      await Promise.all(guests.slice(1).map((guest) => guest.close()));
     });
   });
 });
