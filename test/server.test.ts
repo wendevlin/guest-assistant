@@ -349,6 +349,23 @@ describe("WebSocket proxy", () => {
     ws.close();
   });
 
+  test("core_config_updated arrives as a signal without the changed settings", async () => {
+    const ws = await connect();
+    const sub = await ws.send({ type: "subscribe_events", event_type: "core_config_updated" });
+    expect(sub.success).toBe(true);
+    env.ha.emitEvent("core_config_updated", {
+      latitude: 48.2,
+      longitude: 16.3,
+      location_name: "Secret Base",
+      external_url: "https://home.example.com",
+    });
+    const [ev] = await ws.events(sub.id as number);
+    // Still delivered, so the frontend fetches the scrubbed get_config again.
+    expect((ev!.event as { event_type: string }).event_type).toBe("core_config_updated");
+    expect((ev!.event as { data: object }).data).toEqual({});
+    ws.close();
+  });
+
   test("call_service bypasses are blocked, legit calls reach HA", async () => {
     const ws = await connect();
     const before = env.ha.serviceCalls.length;

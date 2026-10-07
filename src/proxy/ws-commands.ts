@@ -136,6 +136,11 @@ function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Ob
     }
     case "device_registry_updated":
       return typeof data.device_id === "string" && ctx.dashboard.allowedDevices.has(data.device_id) ? event : DROP;
+    case "core_config_updated":
+      // HA puts the changed settings in the event, e.g. a new location or
+      // external URL, which get_config hides from guests. The frontend only
+      // uses the event as a signal to fetch get_config again, which is scrubbed.
+      return { ...event, data: {} };
     case "lovelace_updated":
       // Never passed through: the proxy re-analyses the dashboard first and
       // then notifies guests itself (see WsProxy.dashboardChanged), so the
