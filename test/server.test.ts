@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { DISABLED_AUTH_PATHS } from "../src/auth";
-import { GuestWs, startTestEnv, type TestEnv } from "./helpers";
+import { GuestWs, rawGet, startTestEnv, type TestEnv } from "./helpers";
 
 let env: TestEnv;
 let cookie: string;
@@ -176,6 +176,49 @@ describe("HTTP proxy", () => {
     expect(await res.json()).toEqual({ home_assistant: "connected" });
   });
 
+  test("paths that leave their route are refused, with or without a session", async () => {
+    // Each of these matches a route on the raw path but normalises to a
+    // different HA endpoint. None may be forwarded.
+    const escapes = [
+      "/local/../api/states",
+      "/static/../api/states",
+      "/hacsfiles/../api/states",
+      "/local/%2e%2e/api/states",
+      "/local/%2E%2E/api/camera_proxy/camera.bedroom",
+      "/local/..%2fapi%2fstates",
+      "/static/x/../../api/history/period?filter_entity_id=person.owner",
+      "/api/hls/../states",
+      "/api/brands/../camera_proxy/camera.bedroom",
+      "/api/history/period/../../states?filter_entity_id=light.kitchen",
+      "/api/logbook/../states?entity=light.kitchen",
+      "/api/camera_proxy/camera.garden/../camera.bedroom",
+    ];
+    for (const target of escapes) {
+      const variants: Record<string, string>[] = [{}, { cookie }, { authorization: `Bearer ${token}` }];
+      for (const headers of variants) {
+        const res = await rawGet(env.url, target, headers);
+        expect({ target, status: res.status }).toEqual({ target, status: 404 });
+        expect(res.body).not.toContain("entity_id");
+        expect(res.body).not.toContain("IMG");
+      }
+    }
+  });
+
+  test("the proxy's HA token is never sent on public paths", async () => {
+    const before = env.ha.publicRequests.length;
+    for (const path of ["/local/plan.png", "/hacsfiles/card.js", "/static/does-not-exist.js"]) {
+      expect((await fetch(`${env.url}${path}`, { headers: { cookie } })).status).toBe(200);
+    }
+    const seen = env.ha.publicRequests.slice(before);
+    expect(seen.map((r) => r.path)).toEqual(["/local/plan.png", "/hacsfiles/card.js", "/static/does-not-exist.js"]);
+    expect(seen.every((r) => r.authorization === null)).toBe(true);
+  });
+
+  test("the admin page only answers paths under /admin/", async () => {
+    // Normalises to /abcdefapi/state, which a naive slice would read as api/state.
+    expect((await rawGet(env.url, "/admin/../abcdefapi/state")).status).toBe(404);
+  });
+
   test("public assets pass through without auth, frontend is served", async () => {
     expect(await (await fetch(`${env.url}/static/icons/x.png`)).text()).toBe("static-asset");
     const index = await fetch(`${env.url}/some/spa/route`, { headers: { accept: "text/html" } });
@@ -193,6 +236,61 @@ describe("WebSocket proxy", () => {
     expect(res.type).toBe("auth_ok");
     return ws;
   }
+
+  test("a reused message id never lets an answer skip its filter", async () => {
+    const ws = await connect();
+    // Each command is followed at once by a ping with the same id. Before ids
+    // had to increase, the ping replaced the command in the pending map and
+    // HA's unfiltered answer went straight to the guest.
+    const commands: Record<number, Record<string, unknown>> = {
+      110: { type: "get_states" },
+      120: { type: "history/history_during_period", entity_ids: ["light.kitchen"], start_time: "2026-01-01T00:00:00Z" },
+      130: { type: "get_panels" },
+    };
+    for (const [id, cmd] of Object.entries(commands)) {
+      ws.sendRaw({ id: Number(id), ...cmd });
+      ws.sendRaw({ id: Number(id), type: "ping" });
+    }
+    await Bun.sleep(300);
+    const answers = ws.received.filter((m) => typeof m.id === "number" && m.id >= 110);
+    const ok = new Map(answers.filter((m) => m.success === true).map((m) => [m.id as number, m.result]));
+
+    expect((ok.get(110) as Array<{ entity_id: string }>).map((s) => s.entity_id).sort()).toEqual(["camera.garden", "light.kitchen", "lock.front"]);
+    expect(Object.keys(ok.get(120) as object)).toEqual(["light.kitchen"]);
+    expect(Object.keys(ok.get(130) as object)).toEqual(["guest-dash"]);
+    const refused = answers.filter((m) => (m.error as { code?: string } | undefined)?.code === "id_reuse").map((m) => m.id);
+    expect(refused).toEqual([110, 120, 130]);
+    expect(answers.some((m) => m.type === "pong")).toBe(false);
+    ws.close();
+  });
+
+  test("message ids must be increasing integers", async () => {
+    const ws = await connect();
+    for (const id of [5, 3, 5, 6, 6.5, -1]) ws.sendRaw({ id, type: "ping" });
+    await Bun.sleep(300);
+    expect(ws.received.filter((m) => m.type === "pong").map((m) => m.id)).toEqual([5, 6]);
+    const errors = ws.received.filter((m) => m.type === "result" && m.success === false);
+    expect(errors.map((m) => [m.id, (m.error as { code: string }).code])).toEqual([
+      [3, "id_reuse"],
+      [5, "id_reuse"],
+      [6.5, "unauthorized"],
+      [-1, "unauthorized"],
+    ]);
+    ws.close();
+  });
+
+  test("a live subscription's id cannot be taken over", async () => {
+    const ws = await connect();
+    ws.sendRaw({ id: 50, type: "subscribe_entities" });
+    await Bun.sleep(200);
+    ws.sendRaw({ id: 50, type: "subscribe_events", event_type: "themes_updated" });
+    ws.sendRaw({ id: 51, type: "unsubscribe_events", subscription: 50 });
+    await Bun.sleep(200);
+    const reuse = ws.received.find((m) => m.id === 50 && (m.error as { code?: string } | undefined)?.code === "id_reuse");
+    expect(reuse).toBeDefined();
+    expect(ws.received.find((m) => m.id === 51)?.success).toBe(true);
+    ws.close();
+  });
 
   test("rejects invalid tokens", async () => {
     const ws = new GuestWs(env.wsUrl);
@@ -248,6 +346,23 @@ describe("WebSocket proxy", () => {
     const events = await ws.events(ev.id as number, 1);
     expect(events).toHaveLength(1);
     expect((events[0]!.event as { data: { entity_id: string } }).data.entity_id).toBe("light.kitchen");
+    ws.close();
+  });
+
+  test("core_config_updated arrives as a signal without the changed settings", async () => {
+    const ws = await connect();
+    const sub = await ws.send({ type: "subscribe_events", event_type: "core_config_updated" });
+    expect(sub.success).toBe(true);
+    env.ha.emitEvent("core_config_updated", {
+      latitude: 48.2,
+      longitude: 16.3,
+      location_name: "Secret Base",
+      external_url: "https://home.example.com",
+    });
+    const [ev] = await ws.events(sub.id as number);
+    // Still delivered, so the frontend fetches the scrubbed get_config again.
+    expect((ev!.event as { event_type: string }).event_type).toBe("core_config_updated");
+    expect((ev!.event as { data: object }).data).toEqual({});
     ws.close();
   });
 

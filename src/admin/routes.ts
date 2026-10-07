@@ -339,6 +339,8 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
   return async function handle(req: Request, server: Server<unknown>): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === base.replace(/\/$/, "")) return Response.redirect(`${base}${url.search}`, 308);
+    // The URL is already normalised: `/admin/../x` matched the admin route but arrives as `/x`.
+    if (!url.pathname.startsWith(base)) return new Response("Not Found", { status: 404 });
     const path = url.pathname.slice(base.length);
 
     try {

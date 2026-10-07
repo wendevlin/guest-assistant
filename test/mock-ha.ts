@@ -111,6 +111,8 @@ export interface MockHA {
   serviceCalls: Obj[];
   /** recorded REST service calls */
   restServiceCalls: Array<{ path: string; body: string }>;
+  /** requests to the public static paths, with the authorization header they carried */
+  publicRequests: Array<{ path: string; authorization: string | null }>;
   dashboards: Map<string, Obj>;
   /** push an event to every subscription of that event type */
   emitEvent(eventType: string, data: Obj): void;
@@ -128,6 +130,7 @@ interface SockData {
 export function startMockHA(port = 0): MockHA {
   const serviceCalls: Obj[] = [];
   const restServiceCalls: Array<{ path: string; body: string }> = [];
+  const publicRequests: Array<{ path: string; authorization: string | null }> = [];
   const dashboards = new Map<string, Obj>([
     ["guest-dash", GUEST_DASHBOARD],
     ["bad-dash", AUTO_ENTITIES_DASHBOARD],
@@ -237,6 +240,11 @@ export function startMockHA(port = 0): MockHA {
       if (url.pathname.startsWith("/auth/")) {
         return authRoute(req, url).then((r) => r ?? new Response("mock: not found", { status: 404 }));
       }
+      // Served without login, like HA's static paths.
+      if (["/static/", "/local/", "/hacsfiles/"].some((p) => url.pathname.startsWith(p))) {
+        publicRequests.push({ path: url.pathname, authorization: req.headers.get("authorization") });
+        return new Response("static-asset");
+      }
       if (req.headers.get("authorization") !== `Bearer ${MOCK_TOKEN}`) {
         return new Response("Unauthorized", { status: 401 });
       }
@@ -262,7 +270,6 @@ export function startMockHA(port = 0): MockHA {
         );
       }
       if (url.pathname.startsWith("/api/camera_proxy/")) return new Response("IMG", { headers: { "content-type": "image/jpeg" } });
-      if (url.pathname.startsWith("/static/")) return new Response("static-asset");
       return new Response("mock: not found", { status: 404 });
     },
     websocket: {
@@ -437,6 +444,7 @@ export function startMockHA(port = 0): MockHA {
     },
     serviceCalls,
     restServiceCalls,
+    publicRequests,
     dashboards,
     emitEvent(eventType, data) {
       for (const ws of sockets) {

@@ -15,6 +15,8 @@ export interface ConnState {
   pending: Map<number, TrackedCommand>;
   /** established event streams */
   subscriptions: Map<number, TrackedCommand>;
+  /** highest message id accepted on this connection; ids must increase */
+  lastId: number;
 }
 
 type GuestSocket = ServerWebSocket<ConnState>;
@@ -30,8 +32,8 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }
 
-  function sendError(ws: GuestSocket, id: unknown, message: string): void {
-    send(ws, { id, type: "result", success: false, error: { code: "unauthorized", message } });
+  function sendError(ws: GuestSocket, id: unknown, message: string, code = "unauthorized"): void {
+    send(ws, { id, type: "result", success: false, error: { code, message } });
   }
 
   function register(ws: GuestSocket): void {
@@ -139,10 +141,19 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     }
 
     const id = msg.id;
-    if (typeof id !== "number") {
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) {
       sendError(ws, id, "id required");
       return;
     }
+    // Results and events are matched to the guest's command, and so to its
+    // filter, by id. A reused id would let one command's answer pass through
+    // another command's filter. Like HA, ids must increase; then a new id can
+    // never collide with a pending command or a live subscription.
+    if (id <= ws.data.lastId) {
+      sendError(ws, id, "Identifier values have to increase.", "id_reuse");
+      return;
+    }
+    ws.data.lastId = id;
 
     const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
     const verdict = evaluate(msg, ctx);
@@ -192,6 +203,13 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       } else {
         send(ws, msg);
       }
+      return;
+    }
+
+    if (msg.type === "pong") {
+      // `ping` is answered with a pong, not a result; without this its
+      // pending entry would stay forever.
+      if (ws.data.pending.delete(id)) send(ws, msg);
       return;
     }
 
@@ -259,6 +277,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       haWs: null,
       pending: new Map(),
       subscriptions: new Map(),
+      lastId: 0,
     };
     if (server.upgrade(req, { data })) return undefined;
     return new Response("Expected a WebSocket upgrade", { status: 426 });
