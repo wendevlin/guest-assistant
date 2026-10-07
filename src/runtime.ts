@@ -47,7 +47,7 @@ export class Runtime {
   private _auth: Auth;
   private listeners: Listeners = { dashboardChanged: [], dashboardRemoved: [], guestChanged: [], connectionChanged: [] };
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  /** dashboard id → pending question keys the admin was last notified about */
+  /** dashboard id → what the admin was last notified about (see notifyAdmin) */
   private notified = new Map<string, string>();
   private generation = 0;
 
@@ -273,6 +273,10 @@ export class Runtime {
     const available = await this.listHaDashboards();
     if (!available.some((d) => d.id === id)) throw new RuntimeError(`Dashboard "${id}" does not exist in Home Assistant`);
     if (this.dashboards.has(id)) throw new RuntimeError(`Dashboard "${id}" is already a guest dashboard`);
+    const probe = await this.preview(id, answers);
+    if (probe.status === "rejected") {
+      throw new RuntimeError(`Dashboard "${id}" cannot be used by guests: ${probe.violations.map((v) => v.message).join("; ")}`);
+    }
     this.store.saveDashboard({ id, answers, enabled: true });
     const dashboard = this.track(new Dashboard(id, answers));
     await this.loadDashboard(dashboard);
@@ -327,12 +331,20 @@ export class Runtime {
   // ── admin notifications ────────────────────────────────────────────────
 
   /**
-   * Tells the admin in HA when a dashboard has open questions, e.g. after an
-   * edit added a web link. Until they answer, the restrictive option applies.
+   * Tells the admin in HA when a dashboard needs attention: open questions
+   * (e.g. after an edit added a web link; until they answer, the restrictive
+   * option applies), parts hidden from guests, or a dashboard guests cannot
+   * use at all.
    */
   private async notifyAdmin(dashboard: Dashboard): Promise<void> {
     const pending = dashboard.status === "ok" ? dashboard.pending : [];
-    const signature = pending.map((q) => q.key).sort().join("\n");
+    const signature = [
+      ...pending.map((q) => `question:${q.key}`),
+      ...dashboard.issues.map((i) => `hidden:${i.hidden}:${i.rule}`),
+      ...dashboard.violations.map((v) => `rejected:${v.rule}`),
+    ]
+      .sort()
+      .join("\n");
     if (signature === (this.notified.get(dashboard.id) ?? "")) return;
     this.notified.set(dashboard.id, signature);
     if (!signature) {
@@ -341,12 +353,24 @@ export class Runtime {
     }
     const target = this.appPanelPath ?? (this.publicUrl ? `${this.publicUrl}/admin/` : undefined);
     const link = target ? `\n\n[Open Guest Assistant](${target})` : "";
+    const parts: string[] = [];
+    if (dashboard.status === "rejected") {
+      parts.push(`Guests cannot use the guest dashboard **${dashboard.id}**: ${dashboard.violations.map((v) => v.message).join("; ")}.`);
+    }
+    if (dashboard.issues.length > 0) {
+      const hidden = new Set(dashboard.issues.map((i) => i.hidden)).size;
+      parts.push(`${hidden} part(s) of the guest dashboard **${dashboard.id}** cannot be checked and are hidden from guests.`);
+    }
+    if (pending.length > 0) {
+      parts.push(
+        `The guest dashboard **${dashboard.id}** has ${pending.length} open question(s) about links, navigation or media players. ` +
+          `Until you answer them, guests get the restrictive choice.`,
+      );
+    }
     await this.callService("persistent_notification", "create", {
       notification_id: notificationId(dashboard.id),
-      title: "Guest Assistant needs your input",
-      message:
-        `The guest dashboard **${dashboard.id}** has ${pending.length} open question(s) about links, navigation or media players. ` +
-        `Until you answer them in the Guest Assistant admin page, guests get the restrictive choice.${link}`,
+      title: "Guest Assistant needs your attention",
+      message: `${parts.join("\n\n")}\n\nDetails are on the Guest Assistant admin page.${link}`,
     });
   }
 

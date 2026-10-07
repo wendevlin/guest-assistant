@@ -59,11 +59,28 @@ describe("auth surface", () => {
     await ws.closed;
   });
 
-  test("users of rejected dashboards cannot get a token", async () => {
+  test("cards that cannot be checked are hidden; only a rejected dashboard denies a token", async () => {
     const badCookie = await env.login("badguest", "bad-pass-123");
     const t = await env.hassToken(badCookie);
-    expect(t.status).toBe(403);
-    expect(t.body.reason).toEqual([expect.stringContaining("custom:auto-entities")]);
+    expect(t.status).toBe(200);
+    const ws = new GuestWs(env.wsUrl);
+    expect((await ws.auth(t.body.access_token as string)).type).toBe("auth_ok");
+    const config = await ws.send({ type: "lovelace/config", url_path: "bad-dash" });
+    expect(config.result).toEqual({ views: [{ cards: [] }] });
+    const states = await ws.send({ type: "get_states" });
+    expect(states.result).toEqual([]);
+    ws.close();
+
+    // A strategy cannot be hidden piecewise: guests get the reason instead of a token.
+    const { AUTO_ENTITIES_DASHBOARD, STRATEGY_DASHBOARD } = await import("./mock-ha");
+    const dashboard = env.dashboards.get("bad-dash")!;
+    env.ha.dashboards.set("bad-dash", STRATEGY_DASHBOARD);
+    await dashboard.load(env.runtime.client!);
+    const denied = await env.hassToken(badCookie);
+    expect(denied.status).toBe(403);
+    expect(denied.body.reason).toEqual([expect.stringContaining("strategy")]);
+    env.ha.dashboards.set("bad-dash", AUTO_ENTITIES_DASHBOARD);
+    await dashboard.load(env.runtime.client!);
   });
 
   test("dashboard cannot be changed through update-user", async () => {
@@ -345,10 +362,38 @@ describe("WebSocket proxy", () => {
     await dashboard.load(env.runtime.client!);
   });
 
-  test("a dashboard that becomes invalid drops its connections", async () => {
+  test("a card added that cannot be checked is hidden, guests stay connected", async () => {
+    const ws = await connect();
+    const sub = await ws.send({ type: "subscribe_events", event_type: "lovelace_updated" });
+    const dashboard = env.dashboards.get("guest-dash")!;
+    const { GUEST_DASHBOARD } = await import("./mock-ha");
+    const views = GUEST_DASHBOARD.views as Array<{ cards: unknown[] }>;
+    env.ha.dashboards.set("guest-dash", {
+      views: [{ cards: [...views[0]!.cards, { type: "custom:mushroom-light-card", entity: "light.bedroom" }] }],
+    });
+    await dashboard.load(env.runtime.client!);
+    expect(dashboard.status).toBe("ok");
+    expect(dashboard.issues.map((i) => [i.rule, i.hidden])).toEqual([["custom-card", "$.views[0].cards[4]"]]);
+    // The entity only on the hidden card is not allowed, so nothing changed for guests.
+    expect(dashboard.entities.has("light.bedroom")).toBe(false);
+    expect(dashboard.accessChanged).toBe(false);
+    expect(await ws.events(sub.id as number)).toHaveLength(1);
+
+    const config = (await ws.send({ type: "lovelace/config", url_path: "guest-dash" })).result as { views: Array<{ cards: unknown[] }> };
+    expect(config.views[0]!.cards).toHaveLength(4);
+    const denied = await ws.send({ type: "call_service", domain: "light", service: "turn_on", target: { entity_id: "light.bedroom" } });
+    expect(denied.success).toBe(false);
+    ws.close();
+
+    env.ha.dashboards.set("guest-dash", GUEST_DASHBOARD);
+    await dashboard.load(env.runtime.client!);
+    expect(dashboard.issues).toEqual([]);
+  });
+
+  test("a dashboard that becomes unusable drops its connections", async () => {
     const ws = await connect();
     const dashboard = env.dashboards.get("guest-dash")!;
-    env.ha.dashboards.set("guest-dash", { views: [{ cards: [{ type: "custom:auto-entities" }] }] });
+    env.ha.dashboards.set("guest-dash", { strategy: { type: "original-states" } });
     await dashboard.load(env.runtime.client!);
     expect(dashboard.status).toBe("rejected");
     await ws.closed;

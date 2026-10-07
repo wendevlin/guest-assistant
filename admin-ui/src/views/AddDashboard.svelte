@@ -107,12 +107,15 @@
       {/if}
       {#if shown}
         <StatusBadges dashboard={shown} showGuests={false} />
+        {#if shown.status === "rejected"}
+          <Alert.Root variant="destructive"><Alert.Description>This dashboard cannot be added as a guest dashboard.</Alert.Description></Alert.Root>
+        {/if}
         <Analysis dashboard={shown} onanswer={(q, value) => (answers = { ...answers, [q.key]: value })} />
       {/if}
     </div>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
-      <Button onclick={add} disabled={!preview || busy}>Add</Button>
+      <Button onclick={add} disabled={!preview || preview.status !== "ok" || busy}>Add</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

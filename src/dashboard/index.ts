@@ -11,9 +11,9 @@ import {
   type Decisions,
   type Question,
 } from "./interactions";
-import { validate, type Violation } from "./validate";
+import { sanitize, type Issue, type Violation } from "./validate";
 
-export type { Violation } from "./validate";
+export type { Issue, Violation } from "./validate";
 export type { ConditionUse } from "./conditions";
 export type { Question } from "./interactions";
 export { entityDomain, isEntityId } from "./extract";
@@ -31,14 +31,19 @@ interface StateLike {
 }
 
 /**
- * One HA dashboard used as an authorization source. `status` is "ok" only
- * when the config was loaded and passed validation; anything else denies
- * access for every user bound to this dashboard.
+ * One HA dashboard used as an authorization source. `status` is "ok" when
+ * the config was loaded and can be analysed; parts that cannot be analysed
+ * are left out for guests (`issues`). "rejected" means the dashboard as a
+ * whole cannot be used (`violations`, e.g. a strategy); like "loading" it
+ * denies access for every user bound to this dashboard.
  */
 export class Dashboard {
   readonly id: string;
   status: DashboardStatus = "loading";
+  /** Why the dashboard cannot be used at all; empty unless rejected. */
   violations: Violation[] = [];
+  /** Parts of the dashboard guests do not get. */
+  issues: Issue[] = [];
 
   private _entities = new Set<string>();
   private _domains = new Set<string>();
@@ -119,9 +124,16 @@ export class Dashboard {
     return this._decisions.groupablePlayers.has(entityId);
   }
 
-  /** The dashboard config as guests get it (blocked links replaced). */
+  /**
+   * The dashboard config as guests get it: parts that cannot be analysed left
+   * out, blocked links replaced. HA may have changed the config since the last
+   * analysis, so it is sanitized again; new problems are hidden right away.
+   */
   guestConfig(config: unknown): unknown {
-    return rewriteForGuests(config, this.urlPath, this._decisions);
+    if (!isObj(config)) return config;
+    const { config: clean, blockers } = sanitize(config);
+    if (blockers.length > 0) return { views: [] };
+    return rewriteForGuests(clean, this.urlPath, this._decisions);
   }
 
   /**
@@ -143,19 +155,28 @@ export class Dashboard {
   /** For tests and synthetic setups; `groupablePlayers` comes from HA's states in `load`. */
   applyConfig(config: Obj, groupablePlayers: Iterable<string> = []): void {
     const before = this.accessKey();
-    const violations = validate(config);
-    const extraction = extract(config);
+    // Everything below is taken from the sanitized config, so nothing that
+    // appears only on a hidden part is allowed. Hidden list entries stay as
+    // `null`, which keeps paths shown to the admin in line with HA's config.
+    const { config: clean, blockers, issues } = sanitize(config, { keepPositions: true });
+    if (blockers.length > 0) {
+      this.clear(blockers);
+      this.accessChanged = this.accessKey() !== before;
+      return;
+    }
+    const extraction = extract(clean);
     this._entities = extraction.entities;
     this._domains = new Set([...extraction.entities].map(entityDomain));
     this._templates = extraction.templates;
     this._mediaSources = extraction.mediaSources;
     this._conditions = extraction.conditions;
-    this._conditionUses = findConditions(config);
+    this._conditionUses = findConditions(clean);
     const players = [...groupablePlayers].filter((id) => extraction.entities.has(id));
-    this._questions = findQuestions(config, this.urlPath, players);
+    this._questions = findQuestions(clean, this.urlPath, players);
     this._decisions = decide(this._questions, this._answers);
-    this.violations = violations;
-    this.status = violations.length === 0 ? "ok" : "rejected";
+    this.violations = [];
+    this.issues = issues;
+    this.status = "ok";
     this.accessChanged = this.accessKey() !== before;
   }
 
@@ -233,6 +254,13 @@ export class Dashboard {
 
   private reject(violations: Violation[]): void {
     this.accessChanged = this.status !== "rejected";
+    this.clear(violations);
+    this.log();
+    this.emit();
+  }
+
+  /** Nothing is allowed while the dashboard is rejected. */
+  private clear(violations: Violation[]): void {
     this._entities = new Set();
     this._domains = new Set();
     this._devices = new Set();
@@ -243,9 +271,8 @@ export class Dashboard {
     this._questions = [];
     this._decisions = decide([], {});
     this.violations = violations;
+    this.issues = [];
     this.status = "rejected";
-    this.log();
-    this.emit();
   }
 
   private emit(): void {
@@ -258,11 +285,13 @@ export class Dashboard {
       const pending = this.pending.length;
       console.log(
         `Dashboard "${this.id}": ${this._entities.size} entities, ${this._templates.size} template(s), ${this._devices.size} device(s)` +
-          (pending ? `, ${pending} question(s) for the admin` : ""),
+          (pending ? `, ${pending} question(s) for the admin` : "") +
+          (this.issues.length ? `, ${this.issues.length} part(s) hidden from guests:` : ""),
       );
+      for (const i of this.issues) console.warn(`  [${i.rule}] ${i.path}: ${i.message}`);
       return;
     }
-    console.error(`Dashboard "${this.id}" REJECTED, its guests cannot log in:`);
+    console.error(`Dashboard "${this.id}" REJECTED, its guests cannot use it:`);
     for (const v of this.violations) {
       console.error(`  [${v.rule}] ${v.path}: ${v.message}`);
     }

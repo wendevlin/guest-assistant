@@ -142,6 +142,10 @@ describe("fresh installation (standalone)", () => {
     expect(added.status).toBe(200);
     expect(added.body.configured).toMatchObject([{ id: "guest-dash", status: "ok", entities: 3, title: "Title guest-dash" }]);
     expect((await a.call("POST", "dashboards", { id: "nope" })).status).toBe(400);
+    // A dashboard that cannot be used at all is not added.
+    const strategy = await a.call("POST", "dashboards", { id: "strategy-dash" });
+    expect(strategy.status).toBe(400);
+    expect(strategy.body.error).toContain("strategy");
 
     const guest = await a.call("POST", "guests", { username: "visitor", password: "visitor-pass-1", dashboard: "guest-dash" });
     expect(guest.status).toBe(201);
@@ -256,9 +260,13 @@ describe("admin decisions on a dashboard", () => {
     const view = (added.body.configured as Json[]).find((d) => d.id === "links-dash")!;
     expect(view.pending).toBe(5);
     await Bun.sleep(50);
-    const notification = env.ha.serviceCalls.find((c) => c.domain === "persistent_notification" && c.service === "create");
+    const notification = env.ha.serviceCalls.find(
+      (c) =>
+        c.domain === "persistent_notification" &&
+        c.service === "create" &&
+        (c.service_data as Json).notification_id === "guest_assistant_links_dash",
+    );
     expect(notification).toBeDefined();
-    expect((notification!.service_data as Json).notification_id).toBe("guest_assistant_links_dash");
 
     expect((await a.call("POST", "guests", { username: "links", password: "links-pass-1", dashboard: "links-dash" })).status).toBe(201);
     const { ws } = await connectGuest("links", "links-pass-1");

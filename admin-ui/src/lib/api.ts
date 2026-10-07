@@ -27,7 +27,10 @@ export interface DashboardView {
   status: "loading" | "ok" | "rejected";
   /** Switched on by the admin; inactive dashboards deny their guests. */
   enabled: boolean;
+  /** Why guests cannot use the dashboard at all (only when rejected). */
   violations: Array<{ rule: string; path: string; message: string }>;
+  /** Parts guests do not get: hidden, or an action that does nothing. */
+  issues: Array<{ rule: string; path: string; message: string; hidden: string; effect: "hidden" | "disabled" }>;
   entities: number;
   guests: number;
   pending: number;

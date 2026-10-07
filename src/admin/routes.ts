@@ -132,6 +132,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       status: d.status,
       enabled: d.enabled,
       violations: d.violations,
+      issues: d.issues,
       entities: d.entities.size,
       guests,
       pending: d.pending.length,
