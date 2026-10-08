@@ -135,6 +135,8 @@ export interface MockHA {
 interface SockData {
   authed: boolean;
   user: MockUser | null;
+  /** the token this connection authenticated with */
+  token?: string;
   eventSubs: Map<number, string>;
   /** set by supported_features { coalesce_messages: 1 }: wrap replies in arrays */
   coalesce: boolean;
@@ -165,6 +167,8 @@ export function startMockHA(port = 0): MockHA {
     [ADMIN_TOKEN, "owner"],
     [USER_TOKEN, "alice"],
   ]);
+  /** long-lived token → client_name */
+  const llatNames = new Map<string, string>();
   /** authorization code → { user, client_id } */
   const codes = new Map<string, { userId: string; clientId: string }>();
   const flows = new Map<string, { clientId: string; redirectUri: string }>();
@@ -302,6 +306,7 @@ export function startMockHA(port = 0): MockHA {
           if (user) {
             ws.data.authed = true;
             ws.data.user = user;
+            ws.data.token = String(msg.access_token);
             deliver(ws, JSON.stringify({ type: "auth_ok", ha_version: "2026.9.0" }));
           } else {
             deliver(ws, JSON.stringify({ type: "auth_invalid", message: "bad token" }));
@@ -352,9 +357,37 @@ export function startMockHA(port = 0): MockHA {
             deliver(ws, result(id, null));
             return;
           }
-          case "auth/long_lived_access_token":
-            deliver(ws, result(id, mint("llat", me.id)));
+          case "auth/long_lived_access_token": {
+            const token = mint("llat", me.id);
+            llatNames.set(token, String(msg.client_name));
+            deliver(ws, result(id, token));
             return;
+          }
+          // The mock uses the token itself as refresh token id.
+          case "auth/refresh_tokens":
+            deliver(
+              ws,
+              result(
+                id,
+                [...tokens].filter(([, userId]) => userId === me.id).map(([token]) => ({
+                  id: token,
+                  client_name: llatNames.get(token) ?? null,
+                  type: llatNames.has(token) ? "long_lived_access_token" : "normal",
+                  is_current: token === ws.data.token,
+                })),
+              ),
+            );
+            return;
+          case "auth/delete_refresh_token": {
+            const token = String(msg.refresh_token_id);
+            if (tokens.get(token) !== me.id) { deliver(ws, error(id, "invalid_token_id")); return; }
+            tokens.delete(token);
+            revoked.push(token);
+            // Like HA, connections that used the token are closed, this one before it is answered.
+            for (const s of sockets) if (s.data.token === token) s.close();
+            if (ws.data.token !== token) deliver(ws, result(id, {}));
+            return;
+          }
           case "frontend/get_themes":
             deliver(ws, result(id, { themes: { nord: {}, midnight: {} }, default_theme: "default", default_dark_theme: null }));
             return;

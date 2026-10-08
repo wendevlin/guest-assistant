@@ -143,12 +143,15 @@ There is no configuration file. Everything is managed on the admin page.
 **Standalone** (Docker, a server next to HA, development):
 
 1. Start the proxy. The log prints a one-time setup code and the admin page,
-   `http://<proxy>:3001/admin/`.
+   `http://<proxy>:3001/admin/`. A code is valid for an hour; until set-up is
+   done, a new one is printed every hour.
 2. Enter the code, then pick your Home Assistant. The proxy looks for
    instances on the network (zeroconf; needs host networking in Docker) and
    tries every address each one announces. You can also type an address.
 3. Sign in to Home Assistant as an administrator. HA's normal OAuth login is
-   used, so no app registration is needed.
+   used, so no app registration is needed. Before you are sent there, the
+   page shows the exact address you sign in at. Check that it is your Home
+   Assistant: any device on the network can announce itself as one.
 4. The proxy creates its own **non-admin** HA user ("Guest Assistant"), mints
    a long-lived token for it and stores only that token. The admin's token is
    revoked right after the request, and so is the one-off login of the new
@@ -158,7 +161,10 @@ There is no configuration file. Everything is managed on the admin page.
 Later admin logins go through Home Assistant's login again, and only HA
 administrators get in. Admin sessions live in memory, so a restart asks you
 to sign in again. "Connect a different Home Assistant" in the settings runs
-steps 2 to 4 again and replaces the proxy's old HA user.
+steps 2 to 4 again. In the same Home Assistant it replaces the proxy's old HA
+user. In a different one the proxy revokes its old token in the old Home
+Assistant, but cannot delete the old user there: an administrator of the old
+Home Assistant has to, and the log names the user.
 
 **As a Home Assistant app** the Supervisor token acts as administrator, so
 set-up needs no input. The admin page is only reachable through ingress. See
@@ -205,9 +211,11 @@ on their device only.
   whoever can read them can act as the proxy's HA user. The app image runs
   the proxy as the unprivileged user `bun` (uid 1000) and hands `DATA_DIR` to
   that user first.
-- The setup code is printed to the log and stays valid until set-up is done.
-  Anyone who can read the log can start the set-up (they still need HA admin
-  credentials to finish it).
+- The setup code is printed to the log and is valid for an hour; until set-up
+  is done, a new one is printed every hour. Anyone who can read the log can
+  start the set-up (they still need HA admin credentials to finish it). Wrong
+  codes are limited to 10 a minute per client address and 60 a minute in
+  total.
 - Sign-in attempts are rate-limited per client address. Behind a reverse
   proxy or Docker's port forwarding all guests share one address, so one
   misbehaving client can lock out the sign-in for everyone for a minute.

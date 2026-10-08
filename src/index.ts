@@ -37,15 +37,19 @@ if (runtime.haSettings) {
   };
   void setUp();
 } else {
-  const code = sessions.newSetupCode();
-  console.log(
-    [
-      "",
-      "Guest Assistant is not set up yet.",
-      `Open ${new URL(ADMIN_BASE, server.url)} and enter the setup code:`,
-      "",
-      `    ${code}`,
-      "",
-    ].join("\n"),
+  // A fresh code is printed every hour until set-up is done.
+  sessions.startSetupCodes((code) =>
+    console.log(
+      [
+        "",
+        "Guest Assistant is not set up yet.",
+        `Open ${new URL(ADMIN_BASE, server.url)} and enter the setup code:`,
+        "",
+        `    ${code}`,
+        "",
+        "It is valid for one hour; then a new one is printed here.",
+        "",
+      ].join("\n"),
+    ),
   );
 }

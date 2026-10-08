@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { HaClient } from "./client";
+import { HaClient, HaCommandError } from "./client";
+import type { HaEndpoint } from "./endpoint";
 import { passwordLogin, revokeRefreshToken } from "./oauth";
 
 /** Display name of the HA user the proxy creates for itself. */
@@ -9,6 +10,9 @@ const USERNAME_BASE = "guest-assistant";
 const LOGIN_CLIENT_ID = "http://guest-assistant.local/";
 const LOGIN_REDIRECT_URI = "http://guest-assistant.local/callback";
 const TOKEN_LIFESPAN_DAYS = 3650;
+/** client_name of the long-lived token the proxy mints for its user. */
+const TOKEN_CLIENT_NAME = "Guest Assistant proxy";
+const REVOKE_TIMEOUT_MS = 5_000;
 
 interface HaUserInfo {
   id: string;
@@ -65,7 +69,7 @@ export async function provisionProxyUser(opts: {
         if (me.is_admin) throw new Error("The new proxy user unexpectedly has admin rights");
         return (await client.sendCommand({
           type: "auth/long_lived_access_token",
-          client_name: "Guest Assistant proxy",
+          client_name: TOKEN_CLIENT_NAME,
           lifespan: TOKEN_LIFESPAN_DAYS,
         })) as string;
       });
@@ -84,6 +88,67 @@ export async function provisionProxyUser(opts: {
   } catch (err) {
     await admin.sendCommand({ type: "config/auth/delete", user_id: userId }).catch(() => {});
     throw err;
+  }
+}
+
+interface HaRefreshToken {
+  id: string;
+  client_name: string | null;
+  type: string;
+  is_current?: boolean;
+}
+
+/**
+ * Deletes the long-lived token the proxy minted for its user in a Home
+ * Assistant it no longer uses, logged in with that token: a user may delete
+ * its own tokens, while deleting the user needs an admin of that Home
+ * Assistant. Tokens named otherwise are left alone (the stored token may not
+ * be one the proxy minted). Returns how many were deleted.
+ *
+ * Fails after a short timeout: the old Home Assistant may be gone.
+ */
+export async function revokeProxyToken(endpoint: HaEndpoint, timeoutMs = REVOKE_TIMEOUT_MS): Promise<number> {
+  const clients: HaClient[] = [];
+  const connect = async () => {
+    const client = new HaClient(endpoint);
+    clients.push(client);
+    await client.connect();
+    return client;
+  };
+  const revoke = async () => {
+    const client = await connect();
+    const tokens = (await client.sendCommand({ type: "auth/refresh_tokens" })) as HaRefreshToken[];
+    const own = tokens.filter((t) => t.client_name === TOKEN_CLIENT_NAME && t.type === "long_lived_access_token");
+    const current = own.find((t) => t.is_current);
+    for (const other of own.filter((t) => t !== current)) {
+      await client.sendCommand({ type: "auth/delete_refresh_token", refresh_token_id: other.id });
+    }
+    if (current) {
+      // HA drops the connection as soon as the token it runs on is gone,
+      // without answering. Close it first (instead of HaClient reconnecting)
+      // and check that HA refuses the token now.
+      client.sendCommand({ type: "auth/delete_refresh_token", refresh_token_id: current.id }).catch(() => {});
+      client.close();
+      const refused = await connect().then(
+        () => false,
+        (err: unknown) => {
+          if (err instanceof HaCommandError && err.code === "auth_invalid") return true;
+          throw err;
+        },
+      );
+      if (!refused) throw new Error("Home Assistant still accepts the token");
+    }
+    return own.length;
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs / 1000} s`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([revoke(), timeout]);
+  } finally {
+    clearTimeout(timer);
+    for (const client of clients) client.close();
   }
 }
 
