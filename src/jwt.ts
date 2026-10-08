@@ -17,6 +17,13 @@ export const JWT_TTL_SECONDS = 15 * 60;
  */
 const revokedBefore = new Map<string, number>();
 
+/**
+ * Signed-out sessions whose tokens are refused, with the time (ms) after
+ * which every token issued for them has expired. Only that one session is
+ * affected; the guest's other devices stay signed in.
+ */
+const revokedSessions = new Map<string, number>();
+
 export interface GuestTokenPayload {
   /** better-auth user id */
   sub: string;
@@ -45,6 +52,15 @@ export function signJWT(payload: GuestTokenPayload): string {
 /** Refuses every token of the user issued up to now. */
 export function revokeTokens(userId: string): void {
   revokedBefore.set(userId, Date.now());
+}
+
+/** Refuses every token issued for the session, e.g. after its sign-out. */
+export function revokeSession(sessionId: string): void {
+  const now = Date.now();
+  for (const [sid, until] of revokedSessions) if (until < now) revokedSessions.delete(sid);
+  // A token fetched while the sign-out was in flight may be issued a moment
+  // after this; the extra minute covers it.
+  revokedSessions.set(sessionId, now + (JWT_TTL_SECONDS + 60) * 1000);
 }
 
 export function verifyJWT(token: string): GuestTokenPayload | null {
@@ -77,6 +93,7 @@ export function verifyJWT(token: string): GuestTokenPayload | null {
     if (Date.now() / 1000 > payload.exp) return null;
     const revokedAt = revokedBefore.get(payload.sub);
     if (revokedAt !== undefined && payload.iat <= revokedAt) return null;
+    if (revokedSessions.has(payload.sid)) return null;
     return payload as GuestTokenPayload;
   } catch {
     return null;

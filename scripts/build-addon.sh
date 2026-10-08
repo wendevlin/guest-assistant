@@ -1,7 +1,7 @@
 #!/bin/sh
 # Packages Guest Assistant as a local Home Assistant app (add-on):
 #   dist/addon/guest_assistant/
-# Copy that folder (five files) into the `addons` share of the HA machine (Samba app), then
+# Copy that folder into the `addons` share of the HA machine (Samba app), then
 # Settings > Apps > App store > ⋮ > Check for updates, and install
 # "Guest Assistant" from "Local apps". The Supervisor builds the image there.
 #
@@ -56,7 +56,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT/app/admin-ui"
 # Without `image` the Supervisor builds the Dockerfile instead of pulling the release image.
 grep -v '^image:' guest_assistant/config.yaml > "$OUT/config.yaml"
-cp guest_assistant/Dockerfile guest_assistant/README.md guest_assistant/DOCS.md guest_assistant/icon.png guest_assistant/logo.png "$OUT/"
+cp guest_assistant/Dockerfile guest_assistant/entrypoint.sh guest_assistant/README.md guest_assistant/DOCS.md guest_assistant/icon.png guest_assistant/logo.png "$OUT/"
 cp -r package.json bun.lock tsconfig.json src "$OUT/app/"
 cp admin-ui/package.json "$OUT/app/admin-ui/"
 cp -r admin-ui/dist "$OUT/app/admin-ui/dist"
@@ -64,8 +64,13 @@ cp -r "$FRONTEND_DIST" "$OUT/app/public"
 
 # One archive instead of ~2800 files: copying that many small files over Samba
 # fails half-way too easily, and the Supervisor then sees a broken app folder.
-# The Dockerfile unpacks it with ADD.
-tar -C "$OUT/app" -czf "$OUT/app.tar.gz" .
+# The Dockerfile unpacks it with ADD, which keeps the owners in the archive:
+# make them root, so the proxy (user `bun`, uid 1000) cannot change its code.
+if tar --version 2>/dev/null | grep -q GNU; then
+  tar -C "$OUT/app" --owner=0 --group=0 --numeric-owner -czf "$OUT/app.tar.gz" .
+else
+  tar -C "$OUT/app" --uid 0 --gid 0 -czf "$OUT/app.tar.gz" .
+fi
 rm -rf "$OUT/app"
 
 echo "Packaged $(sed -n 's/^version: *//p' guest_assistant/config.yaml | tr -d '"') in $OUT ($(du -sh "$OUT" | cut -f1))"
