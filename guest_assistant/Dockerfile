@@ -8,10 +8,15 @@ ARG BUILD_ARCH
 ARG BUILD_VERSION
 LABEL io.hass.type="addon" io.hass.name="Guest Assistant" io.hass.arch="${BUILD_ARCH}" io.hass.version="${BUILD_VERSION}" \
       org.opencontainers.image.source="https://github.com/wendevlin/guest-assistant" org.opencontainers.image.licenses="Apache-2.0"
+# su-exec lets entrypoint.sh drop from root to `bun` once /data is prepared.
+COPY entrypoint.sh /usr/local/bin/guest-assistant-entrypoint
+RUN apk add --no-cache su-exec && chmod 755 /usr/local/bin/guest-assistant-entrypoint
 WORKDIR /app
 ADD app.tar.gz ./
 RUN bun install --production --frozen-lockfile
 
 ENV PORT=3001 INGRESS_PORT=8099 DATA_DIR=/data
 EXPOSE 3001 8099
+# The proxy runs as `bun`, not root (entrypoint.sh); both ports are unprivileged.
+ENTRYPOINT ["/usr/local/bin/guest-assistant-entrypoint"]
 CMD ["bun", "run", "src/index.ts"]
