@@ -55,6 +55,16 @@ export const DEVICES = ["dev-kitchen", "dev-bedroom", "dev-lock", "dev-cam", "de
   configuration_url: "http://device.local",
 }));
 
+/** get_services as HA answers it: every script and every legacy notify target is a service of its own. */
+export const SERVICES = {
+  light: { turn_on: {}, turn_off: {}, toggle: {} },
+  lock: { lock: {}, unlock: {}, open: {} },
+  camera: { turn_on: {}, snapshot: {}, record: {}, play_stream: {} },
+  notify: { send_message: {}, mobile_app_owners_phone: {} },
+  script: { turn_on: {}, turn_off: {}, toggle: {}, reload: {}, wake_up: {}, disarm_and_unlock_front_door: {} },
+  homeassistant: { turn_on: {}, turn_off: {}, toggle: {}, restart: {}, reload_all: {} },
+};
+
 export const GUEST_DASHBOARD: Obj = {
   title: "Guest",
   views: [
@@ -380,7 +390,7 @@ export function startMockHA(port = 0): MockHA {
             deliver(ws, result(id, { latitude: 48.2, longitude: 16.3, location_name: "Secret Base", components: ["light", "conversation"], external_url: "https://x" }));
             return;
           case "get_services":
-            deliver(ws, result(id, { light: { turn_on: {} }, lock: { unlock: {} }, notify: { send: {} }, homeassistant: { restart: {} } }));
+            deliver(ws, result(id, SERVICES));
             return;
           case "get_panels":
             deliver(ws, result(id, { lovelace: { url_path: "lovelace" }, "guest-dash": { url_path: "guest-dash" }, "secret-dash": { url_path: "secret-dash" } }));

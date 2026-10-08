@@ -136,6 +136,12 @@ function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Ob
     }
     case "device_registry_updated":
       return typeof data.device_id === "string" && ctx.dashboard.allowedDevices.has(data.device_id) ? event : DROP;
+    case "service_registered":
+    case "service_removed":
+      // Every script is registered as a service of its own, and legacy notify
+      // targets are named after people's phones. Only services the guest may
+      // call are announced, as in get_services.
+      return serviceVisible(data.domain, data.service, ctx) ? event : DROP;
     case "core_config_updated":
       // HA puts the changed settings in the event, e.g. a new location or
       // external URL, which get_config hides from guests. The frontend only
@@ -193,6 +199,19 @@ const ENTITY_SERVICES: Record<string, readonly string[]> = {
 };
 
 const HOMEASSISTANT_SERVICES = new Set(["turn_on", "turn_off", "toggle"]);
+
+/**
+ * Whether a guest may see a service: exactly the services `call_service`
+ * accepts for some entity on the dashboard. Everything else HA registers,
+ * such as one service per script or a notify service per phone, stays hidden.
+ */
+function serviceVisible(domain: unknown, service: unknown, ctx: CommandContext): boolean {
+  if (typeof domain !== "string" || typeof service !== "string") return false;
+  if (domain === "homeassistant") return HOMEASSISTANT_SERVICES.has(service);
+  if (!ctx.dashboard.allowedDomains.has(domain) || !Object.hasOwn(ENTITY_SERVICES, domain)) return false;
+  return ENTITY_SERVICES[domain]!.includes(service);
+}
+
 const TARGET_SELECTOR_KEYS = ["entity_id", "device_id", "area_id", "label_id", "floor_id"];
 
 /**
@@ -401,7 +420,10 @@ export const COMMANDS: Record<string, CommandSpec> = {
   ping: { fields: [] },
   get_states: { fields: [], filterResult: (r, ctx) => F.filterStates(r, A(ctx)) },
   get_config: { fields: [], filterResult: (r) => F.scrubConfig(r) },
-  get_services: { fields: [], filterResult: (r, ctx) => F.filterServices(r, ctx.dashboard.allowedDomains) },
+  get_services: {
+    fields: [],
+    filterResult: (r, ctx) => F.filterServices(r, ctx.dashboard.allowedDomains, (domain, service) => serviceVisible(domain, service, ctx)),
+  },
   get_panels: { fields: [], filterResult: (r, ctx) => F.filterPanels(r, ctx.dashboard.id) },
   supported_features: { fields: ["features"] },
   call_service: { fields: ["domain", "service", "target", "service_data", "return_response"], validate: validateCallService },
@@ -568,8 +590,8 @@ export const COMMANDS: Record<string, CommandSpec> = {
 
   // Misc read-only
   "sensor/numeric_device_classes": { fields: [] },
-  "manifest/list": { fields: ["integrations"] },
-  "manifest/get": { fields: ["integration"] },
+  // manifest/list and manifest/get are not offered: they describe every
+  // installed integration, and only admin views of the frontend use them.
 };
 
 // ── evaluation ───────────────────────────────────────────────────────────
