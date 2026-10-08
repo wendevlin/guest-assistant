@@ -200,8 +200,12 @@ on their device only.
   proxy or Docker's port forwarding all guests share one address, so one
   misbehaving client can lock out the sign-in for everyone for a minute.
 - Deleting a guest, changing their password or dashboard ends their
-  connections and refuses the tokens they still hold. Sessions do not
-  survive a restart of the proxy.
+  connections and refuses the tokens they still hold. Signing out does the
+  same for that one device; the guest's other devices stay signed in.
+  Sessions do not survive a restart of the proxy.
+- Session cookies are marked `Secure` when the guest address is https or
+  the reverse proxy sends `X-Forwarded-Proto: https`. Behind a
+  TLS-terminating proxy that does neither, they go out without it.
 - This is alpha software. Read the "What a guest can do" table as the
   contract; anything not listed there is meant to be denied, and a way
   around it is a bug worth reporting.
@@ -249,7 +253,7 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 ## Endpoints the frontend uses
 
 - Admin page: `/admin/` and its JSON API under `/admin/api/` (mutating calls need the header `x-guest-assistant: 1`)
-- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out`
+- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out` (the only better-auth endpoints that answer, each with exactly this method)
 - `GET /api/auth/hass-token` → `{ access_token, refresh_token, expires_in, dashboard_url_path }`
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
 - `GET /api/states`, `/api/camera_proxy/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`

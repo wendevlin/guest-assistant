@@ -9,6 +9,8 @@ type Phase = "awaiting_auth" | "connecting_ha" | "active" | "closed";
 export interface ConnState {
   phase: Phase;
   userId: string | null;
+  /** better-auth session the token was issued for; its sign-out closes the connection */
+  sessionId: string | null;
   dashboard: Dashboard | null;
   haWs: WebSocket | null;
   /** commands sent upstream that await their result */
@@ -77,6 +79,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     const token = ha.token;
 
     ws.data.userId = payload.sub;
+    ws.data.sessionId = payload.sid;
     ws.data.dashboard = dashboard;
     ws.data.phase = "connecting_ha";
     register(ws);
@@ -273,6 +276,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     const data: ConnState = {
       phase: "awaiting_auth",
       userId: null,
+      sessionId: null,
       dashboard: null,
       haWs: null,
       pending: new Map(),
@@ -285,6 +289,11 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
   function closeForUser(userId: string): void {
     for (const ws of [...(byUser.get(userId) ?? [])]) terminate(ws);
+  }
+
+  /** Closes the connections made with tokens of a session that was signed out. */
+  function closeForSession(sessionId: string): void {
+    for (const ws of [...all]) if (ws.data.sessionId === sessionId) terminate(ws);
   }
 
   function closeForDashboard(dashboardId: string): void {
@@ -323,5 +332,5 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     for (const ws of [...all]) terminate(ws);
   }
 
-  return { handlers, upgrade, closeForUser, closeForDashboard, closeAll, dashboardChanged };
+  return { handlers, upgrade, closeForUser, closeForSession, closeForDashboard, closeAll, dashboardChanged };
 }

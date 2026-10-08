@@ -3,23 +3,35 @@ import { username } from "better-auth/plugins";
 import type { Database } from "bun:sqlite";
 
 /**
- * Only these better-auth endpoints are reachable. Everything else is disabled
- * via `disabledPaths`. The guest frontend uses sign-in/username, get-session
- * and sign-out. Keep this list in sync with the test in test/auth.test.ts.
+ * The better-auth endpoints the guest frontend uses (guest-api.ts there),
+ * with their method. Every other request under /api/auth is answered with
+ * 404 before it reaches better-auth (auth/handler.ts), so endpoints a
+ * better-auth update adds stay off as well.
  */
-const ENABLED_AUTH_PATHS = ["/sign-in/username", "/sign-out", "/get-session", "/ok", "/error"];
+export const ALLOWED_AUTH_ENDPOINTS: ReadonlyMap<string, string> = new Map([
+  ["/sign-in/username", "POST"],
+  ["/sign-out", "POST"],
+  ["/get-session", "GET"],
+]);
 
+/**
+ * Second layer: the endpoints better-auth itself is told to disable via
+ * `disabledPaths`. It only knows exact paths, so it misses new ones and
+ * those with parameters (`/callback/:id`). Checked in test/server.test.ts.
+ */
 const ALL_KNOWN_AUTH_PATHS = [
   "/account-info",
   "/change-email",
   "/change-password",
   "/delete-user",
   "/delete-user/callback",
+  "/error",
   "/get-access-token",
   "/is-username-available",
   "/link-social",
   "/list-accounts",
   "/list-sessions",
+  "/ok",
   "/refresh-token",
   "/request-password-reset",
   "/reset-password",
@@ -37,7 +49,7 @@ const ALL_KNOWN_AUTH_PATHS = [
   "/verify-password",
 ];
 
-export const DISABLED_AUTH_PATHS = ALL_KNOWN_AUTH_PATHS.filter((p) => !ENABLED_AUTH_PATHS.includes(p));
+export const DISABLED_AUTH_PATHS = ALL_KNOWN_AUTH_PATHS.filter((p) => !ALLOWED_AUTH_ENDPOINTS.has(p));
 
 export interface AuthOptions {
   db: Database;
