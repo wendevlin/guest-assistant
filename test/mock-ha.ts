@@ -55,6 +55,16 @@ export const DEVICES = ["dev-kitchen", "dev-bedroom", "dev-lock", "dev-cam", "de
   configuration_url: "http://device.local",
 }));
 
+/** get_services as HA answers it: every script and every legacy notify target is a service of its own. */
+export const SERVICES = {
+  light: { turn_on: {}, turn_off: {}, toggle: {} },
+  lock: { lock: {}, unlock: {}, open: {} },
+  camera: { turn_on: {}, snapshot: {}, record: {}, play_stream: {} },
+  notify: { send_message: {}, mobile_app_owners_phone: {} },
+  script: { turn_on: {}, turn_off: {}, toggle: {}, reload: {}, wake_up: {}, disarm_and_unlock_front_door: {} },
+  homeassistant: { turn_on: {}, turn_off: {}, toggle: {}, restart: {}, reload_all: {} },
+};
+
 export const GUEST_DASHBOARD: Obj = {
   title: "Guest",
   views: [
@@ -116,6 +126,8 @@ export interface MockHA {
   dashboards: Map<string, Obj>;
   /** push an event to every subscription of that event type */
   emitEvent(eventType: string, data: Obj): void;
+  /** command types left unanswered, e.g. to keep them pending in the proxy */
+  unanswered: Set<string>;
   stop(): void;
 }
 
@@ -141,6 +153,7 @@ export function startMockHA(port = 0): MockHA {
   ]);
   const sockets = new Set<ServerWebSocket<SockData>>();
   const revoked: string[] = [];
+  const unanswered = new Set<string>();
 
   const users: MockUser[] = [
     { id: "owner", name: "Owner", username: "owner", is_owner: true, is_admin: true, system_generated: false, local_only: false, group_ids: ["system-admin"] },
@@ -299,6 +312,7 @@ export function startMockHA(port = 0): MockHA {
           }
           return;
         }
+        if (unanswered.has(String(msg.type))) return;
         const id = msg.id;
         const me = ws.data.user!;
         const adminOnly = new Set(["config/auth/list", "config/auth/create", "config/auth/delete", "config/auth_provider/homeassistant/create"]);
@@ -413,7 +427,7 @@ export function startMockHA(port = 0): MockHA {
             deliver(ws, result(id, { latitude: 48.2, longitude: 16.3, location_name: "Secret Base", components: ["light", "conversation"], external_url: "https://x" }));
             return;
           case "get_services":
-            deliver(ws, result(id, { light: { turn_on: {} }, lock: { unlock: {} }, notify: { send: {} }, homeassistant: { restart: {} } }));
+            deliver(ws, result(id, SERVICES));
             return;
           case "get_panels":
             deliver(ws, result(id, { lovelace: { url_path: "lovelace" }, "guest-dash": { url_path: "guest-dash" }, "secret-dash": { url_path: "secret-dash" } }));
@@ -479,6 +493,7 @@ export function startMockHA(port = 0): MockHA {
     restServiceCalls,
     publicRequests,
     dashboards,
+    unanswered,
     emitEvent(eventType, data) {
       for (const ws of sockets) {
         for (const [id, type] of ws.data.eventSubs) {

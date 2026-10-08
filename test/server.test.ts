@@ -37,25 +37,33 @@ describe("auth surface", () => {
     const guest = await env.runtime.createGuest({ username: "leaving", password: "leaving-pass-1", dashboard: "guest-dash" });
     // Signed in through the API, not the handler: better-auth's sign-in rate
     // limit is shared by every test in this process.
-    const signIn = await env.runtime.auth.api.signInUsername({ body: { username: "leaving", password: "leaving-pass-1" }, asResponse: true });
-    const c = signIn.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+    const signIn = async () => {
+      const res = await env.runtime.auth.api.signInUsername({ body: { username: "leaving", password: "leaving-pass-1" }, asResponse: true });
+      return res.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+    };
+    const c = await signIn();
+    const other = await signIn();
     const t = (await env.hassToken(c)).body.access_token as string;
+    const otherToken = (await env.hassToken(other)).body.access_token as string;
     const bearer = { authorization: `Bearer ${t}` };
+    const otherBearer = { authorization: `Bearer ${otherToken}` };
     expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: { cookie: c } })).status).toBe(200);
     expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(200);
 
-    // The session cookie stops working with the sign-out, not a minute later.
+    // The session cookie stops working with the sign-out, not a minute later,
+    // and so do the tokens issued for that session.
     const out = await fetch(`${env.url}/api/auth/sign-out`, { method: "POST", headers: { cookie: c, origin: env.url } });
     expect(out.status).toBe(200);
     expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: { cookie: c } })).status).toBe(401);
-    // The JWT is independent of the session ...
-    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(200);
+    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(401);
+    // The guest's other session keeps working ...
+    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: otherBearer })).status).toBe(200);
 
     // ... until the guest is changed or deleted.
     await env.runtime.deleteGuest(guest.id);
-    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: bearer })).status).toBe(401);
+    expect((await fetch(`${env.url}/api/states/light.kitchen`, { headers: otherBearer })).status).toBe(401);
     const ws = new GuestWs(env.wsUrl);
-    expect((await ws.auth(t)).type).toBe("auth_invalid");
+    expect((await ws.auth(otherToken)).type).toBe("auth_invalid");
     await ws.closed;
   });
 
@@ -95,13 +103,17 @@ describe("auth surface", () => {
   });
 
   test("all non-essential better-auth endpoints are disabled", async () => {
+    // Asks better-auth directly: over HTTP the allowlist in front of it
+    // answers first (test/auth-sessions.test.ts), and this list is the
+    // second layer behind it.
     for (const path of DISABLED_AUTH_PATHS) {
       for (const method of ["GET", "POST"]) {
-        const res = await fetch(`${env.url}/api/auth${path}`, {
+        const req = new Request(`${env.url}/api/auth${path}`, {
           method,
           headers: { "content-type": "application/json", cookie, origin: env.url },
           body: method === "POST" ? "{}" : undefined,
         });
+        const res = await env.runtime.auth.handler(req);
         expect(res.status, `${method} ${path}`).toBe(404);
       }
     }
@@ -325,8 +337,14 @@ describe("WebSocket proxy", () => {
     const panels = await ws.send({ type: "get_panels" });
     expect(Object.keys(panels.result as object)).toEqual(["guest-dash"]);
 
+    // Only what call_service accepts: no per-script or notify services, no camera.snapshot.
     const services = await ws.send({ type: "get_services" });
-    expect(Object.keys(services.result as object).sort()).toEqual(["homeassistant", "light", "lock"]);
+    expect(services.result).toEqual({
+      light: { turn_on: {}, turn_off: {}, toggle: {} },
+      lock: { lock: {}, unlock: {}, open: {} },
+      camera: { turn_on: {} },
+      homeassistant: { turn_on: {}, turn_off: {}, toggle: {} },
+    });
 
     const user = await ws.send({ type: "auth/current_user" });
     expect((user.result as { is_admin: boolean }).is_admin).toBe(false);
@@ -363,6 +381,23 @@ describe("WebSocket proxy", () => {
     // Still delivered, so the frontend fetches the scrubbed get_config again.
     expect((ev!.event as { event_type: string }).event_type).toBe("core_config_updated");
     expect((ev!.event as { data: object }).data).toEqual({});
+    ws.close();
+  });
+
+  test("service_registered and service_removed only announce services the guest may call", async () => {
+    const ws = await connect();
+    const registered = await ws.send({ type: "subscribe_events", event_type: "service_registered" });
+    const removed = await ws.send({ type: "subscribe_events", event_type: "service_removed" });
+    env.ha.emitEvent("service_registered", { domain: "script", service: "disarm_and_unlock_front_door" });
+    env.ha.emitEvent("service_registered", { domain: "notify", service: "mobile_app_owners_phone" });
+    env.ha.emitEvent("service_registered", { domain: "light", service: "reload" });
+    env.ha.emitEvent("service_registered", { domain: "light", service: "turn_on" });
+    env.ha.emitEvent("service_removed", { domain: "script", service: "wake_up" });
+    env.ha.emitEvent("service_removed", { domain: "lock", service: "open" });
+    const data = async (id: unknown, n: number) =>
+      (await ws.events(id as number, n)).map((m) => (m.event as { data: object }).data);
+    expect(await data(registered.id, 1)).toEqual([{ domain: "light", service: "turn_on" }]);
+    expect(await data(removed.id, 1)).toEqual([{ domain: "lock", service: "open" }]);
     ws.close();
   });
 

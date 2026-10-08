@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Dashboard } from "../src/dashboard";
 import { COMMANDS, DROP, evaluate, type CommandContext, type Verdict } from "../src/proxy/ws-commands";
-import { GUEST_DASHBOARD } from "./mock-ha";
+import { GUEST_DASHBOARD, SERVICES } from "./mock-ha";
 
 const dashboard = new Dashboard("guest-dash");
 dashboard.applyConfig(GUEST_DASHBOARD);
@@ -33,6 +33,21 @@ describe("evaluate: default deny", () => {
     expectReject({ type: "config/entity_registry/update", entity_id: "light.kitchen", name: "x" });
     expectReject({ type: "tag/list" });
     expectReject({ type: "media_source/browse_media" });
+    // Describe every installed integration; only admin views use them.
+    expectReject({ type: "manifest/list" });
+    expectReject({ type: "manifest/get", integration: "nuki" });
+  });
+
+  test("get_services hides scripts and services the guest cannot call", () => {
+    const scripts = new Dashboard("scripts");
+    scripts.applyConfig({ views: [{ cards: [{ type: "entities", entities: ["script.wake_up"] }] }] });
+    const filtered = COMMANDS.get_services!.filterResult!(SERVICES, { dashboard: scripts, subscriptions: new Map() }, {});
+    // The UI then offers a plain "Run" (script.turn_on) instead of a fields form
+    // for script.wake_up, which call_service would refuse anyway.
+    expect(filtered).toEqual({
+      script: { turn_on: {}, turn_off: {}, toggle: {} },
+      homeassistant: { turn_on: {}, turn_off: {}, toggle: {} },
+    });
   });
 
   test("the entity registry list is filtered to the dashboard", () => {
