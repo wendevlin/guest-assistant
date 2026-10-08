@@ -2,7 +2,7 @@ import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import type { Dashboard } from "../dashboard";
 import { haWsUrl, type HaEndpoint } from "../ha/endpoint";
 import { verifyJWT } from "../jwt";
-import { COMMANDS, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand } from "./ws-commands";
+import { commandSpec, DROP, evaluate, type CommandContext, type Obj, type TrackedCommand, type Verdict } from "./ws-commands";
 
 type Phase = "awaiting_auth" | "connecting_ha" | "active" | "closed";
 
@@ -19,11 +19,124 @@ export interface ConnState {
   subscriptions: Map<number, TrackedCommand>;
   /** highest message id accepted on this connection; ids must increase */
   lastId: number;
+  /** commands sent to HA */
+  sendBucket: TokenBucket;
+  /** call_service commands, which take from sendBucket as well */
+  callServiceBucket: TokenBucket;
+  /** warnings caused by this connection */
+  log: LogLimiter;
 }
 
 type GuestSocket = ServerWebSocket<ConnState>;
 
 const MAX_MESSAGE_BYTES = 64 * 1024;
+
+// Each guest socket opens its own socket to HA, so these limits bound the
+// work one guest can cause in HA and the memory the proxy holds for them.
+/** Live subscriptions per connection: a large dashboard holds 100+ (visibility conditions, markdown cards, history). */
+export const MAX_SUBSCRIPTIONS = 500;
+/** Commands per connection waiting for HA's answer: above SEND_BURST, so only a slow or stalled HA reaches it. */
+export const MAX_PENDING = 500;
+/** Commands sent to HA at once: the frontend's 30-60 after connecting plus a large dashboard's subscriptions. */
+export const SEND_BURST = 300;
+/** Commands sent to HA per second after the burst: opening a view or a more-info dialog takes a few dozen. */
+export const SEND_PER_SECOND = 20;
+/** Service calls at once: repeated taps and slider moves. */
+export const CALL_SERVICE_BURST = 30;
+/** Service calls per second after the burst: more than a person taps, and each can become a radio command. */
+export const CALL_SERVICE_PER_SECOND = 3;
+/** Connections per guest account (devices, tabs); beyond it the oldest is closed and its page reconnects. */
+export const MAX_CONNECTIONS_PER_USER = 10;
+/** Warnings per connection and minute; a guest's flood shows up as one summary line instead. */
+const LOG_LINES_PER_MINUTE = 10;
+/** Logged lines quote guest input, which may be up to MAX_MESSAGE_BYTES long. */
+const MAX_LOG_LINE = 300;
+
+/**
+ * Logs the first LOG_LINES_PER_MINUTE warnings of a minute. The rest are only
+ * counted and reported in one line when the minute ends or on flush(), so a
+ * guest cannot flood the log and real attempts do not drown in it.
+ */
+class LogLimiter {
+  private windowStart = 0;
+  private lines = 0;
+  private suppressed = 0;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(private readonly about: () => string) {}
+
+  warn(line: string): void {
+    const now = Date.now();
+    if (now - this.windowStart >= 60_000) {
+      this.flush();
+      this.windowStart = now;
+      this.lines = 0;
+    }
+    if (this.lines < LOG_LINES_PER_MINUTE) {
+      this.lines++;
+      // One line per warning, also when guest input contains line breaks.
+      const clean = line.replace(/[\u0000-\u001f\u007f]/g, " ");
+      console.warn(clean.length > MAX_LOG_LINE ? `${clean.slice(0, MAX_LOG_LINE)}…` : clean);
+      return;
+    }
+    this.suppressed++;
+    if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.windowStart + 60_000 - now);
+      this.timer.unref();
+    }
+  }
+
+  flush(): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.suppressed === 0) return;
+    console.warn(`[ws-proxy] suppressed ${this.suppressed} more warning(s) about ${this.about()}`);
+    this.suppressed = 0;
+  }
+}
+
+/** Allows `burst` events at once and `perSecond` on average after that. */
+class TokenBucket {
+  private tokens: number;
+  private last = Date.now();
+
+  constructor(
+    private readonly burst: number,
+    private readonly perSecond: number,
+  ) {
+    this.tokens = burst;
+  }
+
+  take(): boolean {
+    const now = Date.now();
+    // max(): the wall clock can step back.
+    this.tokens = Math.min(this.burst, this.tokens + (Math.max(0, now - this.last) * this.perSecond) / 1000);
+    this.last = now;
+    if (this.tokens < 1) return false;
+    this.tokens--;
+    return true;
+  }
+}
+
+/** Subscriptions established plus those still waiting for HA's answer. */
+function subscriptionCount(conn: ConnState): number {
+  let count = conn.subscriptions.size;
+  for (const { type } of conn.pending.values()) if (commandSpec(type)?.subscription) count++;
+  return count;
+}
+
+/** Why a command may not be sent to HA now, or null if it may. */
+function overLimit(conn: ConnState, type: string): { code: string; message: string } | null {
+  if (conn.pending.size >= MAX_PENDING) return { code: "too_many_pending", message: "Too many commands waiting for Home Assistant" };
+  if (commandSpec(type)?.subscription && subscriptionCount(conn) >= MAX_SUBSCRIPTIONS) {
+    return { code: "too_many_subscriptions", message: "Too many subscriptions" };
+  }
+  // The call_service bucket first: refused calls then do not use up the
+  // tokens the rest of the dashboard needs.
+  if (type === "call_service" && !conn.callServiceBucket.take()) return { code: "rate_limited", message: "Too many actions, try again in a moment" };
+  if (!conn.sendBucket.take()) return { code: "rate_limited", message: "Too many requests, try again in a moment" };
+  return null;
+}
 
 export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: ReadonlyMap<string, Dashboard>) {
   const all = new Set<GuestSocket>();
@@ -38,10 +151,24 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     send(ws, { id, type: "result", success: false, error: { code, message } });
   }
 
+  /** Shared: every warning about a closed connection comes from a new one. */
+  const connectionLog = new LogLimiter(() => "closed connections");
+
   function register(ws: GuestSocket): void {
     const { userId, dashboard } = ws.data;
     all.add(ws);
-    if (userId) (byUser.get(userId) ?? byUser.set(userId, new Set()).get(userId)!).add(ws);
+    if (userId) {
+      const conns = byUser.get(userId) ?? byUser.set(userId, new Set()).get(userId)!;
+      conns.add(ws);
+      // Sets keep insertion order, so the first is the oldest. Closing it
+      // rather than refusing the new one keeps a guest from locking themselves
+      // out; a page still open on it reconnects on its own.
+      const [oldest] = conns;
+      if (conns.size > MAX_CONNECTIONS_PER_USER && oldest) {
+        connectionLog.warn(`[ws-proxy] user ${userId} has more than ${MAX_CONNECTIONS_PER_USER} connections; closing the oldest`);
+        terminate(oldest);
+      }
+    }
     if (dashboard) (byDashboard.get(dashboard.id) ?? byDashboard.set(dashboard.id, new Set()).get(dashboard.id)!).add(ws);
   }
 
@@ -56,6 +183,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     ws.data.phase = "closed";
     ws.data.haWs?.close();
     ws.data.haWs = null;
+    ws.data.log.flush();
     unregister(ws);
     ws.close();
   }
@@ -159,21 +287,42 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     ws.data.lastId = id;
 
     const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
-    const verdict = evaluate(msg, ctx);
+    let verdict: Verdict;
+    try {
+      verdict = evaluate(msg, ctx);
+    } catch (err) {
+      // A bug in a check must still answer the guest: an exception escaping
+      // this handler makes Bun drop the socket without a reply.
+      ws.data.log.warn(`[ws-proxy] error checking ${String(msg.type)} from user ${ws.data.userId}: ${String(err)}`);
+      sendError(ws, id, "Unknown error", "unknown_error");
+      return;
+    }
 
     switch (verdict.kind) {
       case "reject":
-        console.warn(`[ws-proxy] rejected ${String(msg.type)} from user ${ws.data.userId}: ${verdict.message}`);
+        ws.data.log.warn(`[ws-proxy] rejected ${String(msg.type)} from user ${ws.data.userId}: ${verdict.message}`);
         sendError(ws, id, "Operation not permitted");
         return;
       case "reply":
+        // Answered by the proxy: costs HA nothing and keeps no state here, so
+        // the limits below do not apply.
         send(ws, { id, type: "result", success: true, result: verdict.result });
         for (const event of verdict.events ?? []) send(ws, { id, type: "event", event });
         return;
       case "forward": {
         const type = String(verdict.msg.type);
         if (type === "unsubscribe_events") {
+          // Never limited: it frees resources in HA, a refused one would leave
+          // a stream running that the frontend has dropped, and each one ends
+          // a subscription, so they add at most MAX_SUBSCRIPTIONS to pending.
           ws.data.subscriptions.delete(verdict.msg.subscription as number);
+        } else {
+          const limited = overLimit(ws.data, type);
+          if (limited) {
+            ws.data.log.warn(`[ws-proxy] refused ${type} from user ${ws.data.userId}: ${limited.code}`);
+            sendError(ws, id, limited.message, limited.code);
+            return;
+          }
         }
         ws.data.pending.set(id, { type, msg: verdict.msg });
         haWs.send(JSON.stringify(verdict.msg));
@@ -199,13 +348,20 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       const tracked = ws.data.pending.get(id);
       ws.data.pending.delete(id);
       if (!tracked) return; // never forward results we did not ask for
-      const spec = COMMANDS[tracked.type];
-      if (msg.success && spec?.subscription) ws.data.subscriptions.set(id, tracked);
+      const spec = commandSpec(tracked.type);
+      let out = msg;
       if (msg.success && spec?.filterResult) {
-        send(ws, { ...msg, result: spec.filterResult(msg.result, ctx, tracked.msg) });
-      } else {
-        send(ws, msg);
+        try {
+          out = { ...msg, result: spec.filterResult(msg.result, ctx, tracked.msg) };
+        } catch (err) {
+          // Never pass HA's answer on unfiltered; an error lets the guest stop waiting.
+          ws.data.log.warn(`[ws-proxy] error filtering ${tracked.type} for user ${ws.data.userId}: ${String(err)}`);
+          sendError(ws, id, "Unknown error", "unknown_error");
+          return;
+        }
       }
+      if (msg.success && spec?.subscription) ws.data.subscriptions.set(id, tracked);
+      send(ws, out);
       return;
     }
 
@@ -219,9 +375,16 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     if (msg.type === "event") {
       const tracked = ws.data.subscriptions.get(id);
       if (!tracked) return;
-      const spec = COMMANDS[tracked.type];
+      const spec = commandSpec(tracked.type);
       if (spec?.filterEvent) {
-        const filtered = spec.filterEvent(msg.event, ctx, tracked.msg);
+        let filtered: unknown;
+        try {
+          filtered = spec.filterEvent(msg.event, ctx, tracked.msg);
+        } catch (err) {
+          // Dropped: never passed on unfiltered.
+          ws.data.log.warn(`[ws-proxy] error filtering ${tracked.type} for user ${ws.data.userId}: ${String(err)}`);
+          return;
+        }
         if (filtered === DROP) return;
         send(ws, { ...msg, event: filtered });
       } else {
@@ -268,6 +431,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       ws.data.phase = "closed";
       ws.data.haWs?.close();
       ws.data.haWs = null;
+      ws.data.log.flush();
       unregister(ws);
     },
   };
@@ -282,6 +446,9 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       pending: new Map(),
       subscriptions: new Map(),
       lastId: 0,
+      sendBucket: new TokenBucket(SEND_BURST, SEND_PER_SECOND),
+      callServiceBucket: new TokenBucket(CALL_SERVICE_BURST, CALL_SERVICE_PER_SECOND),
+      log: new LogLimiter(() => `user ${data.userId}`),
     };
     if (server.upgrade(req, { data })) return undefined;
     return new Response("Expected a WebSocket upgrade", { status: 426 });

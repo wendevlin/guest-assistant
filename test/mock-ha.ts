@@ -126,6 +126,8 @@ export interface MockHA {
   dashboards: Map<string, Obj>;
   /** push an event to every subscription of that event type */
   emitEvent(eventType: string, data: Obj): void;
+  /** command types left unanswered, e.g. to keep them pending in the proxy */
+  unanswered: Set<string>;
   stop(): void;
 }
 
@@ -149,6 +151,7 @@ export function startMockHA(port = 0): MockHA {
   ]);
   const sockets = new Set<ServerWebSocket<SockData>>();
   const revoked: string[] = [];
+  const unanswered = new Set<string>();
 
   const users: MockUser[] = [
     { id: "owner", name: "Owner", username: "owner", is_owner: true, is_admin: true, system_generated: false, local_only: false, group_ids: ["system-admin"] },
@@ -304,6 +307,7 @@ export function startMockHA(port = 0): MockHA {
           }
           return;
         }
+        if (unanswered.has(String(msg.type))) return;
         const id = msg.id;
         const me = ws.data.user!;
         const adminOnly = new Set(["config/auth/list", "config/auth/create", "config/auth/delete", "config/auth_provider/homeassistant/create"]);
@@ -456,6 +460,7 @@ export function startMockHA(port = 0): MockHA {
     restServiceCalls,
     publicRequests,
     dashboards,
+    unanswered,
     emitEvent(eventType, data) {
       for (const ws of sockets) {
         for (const [id, type] of ws.data.eventSubs) {
