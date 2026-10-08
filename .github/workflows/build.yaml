@@ -8,7 +8,11 @@ name: Build
 # Pushing a tag vX.Y.Z by hand releases as well.
 #
 # The guest frontend is not built here: it comes from the release of
-# wendevlin/guest-assistant-frontend named in .github/frontend-release.
+# wendevlin/guest-assistant-frontend named in .github/frontend-release, and is
+# only used if its SHA-256 matches .github/frontend-release.sha256
+# (scripts/pin-frontend.sh writes both).
+#
+# Actions are pinned to commit SHAs; the comment names the tag.
 
 on:
   push:
@@ -27,10 +31,10 @@ jobs:
     name: Typecheck and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4"
       - run: bun install --frozen-lockfile
@@ -44,7 +48,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       publish: ${{ steps.check.outputs.publish }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Check
@@ -94,10 +98,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4"
       - run: bun install --frozen-lockfile
@@ -106,8 +110,12 @@ jobs:
         run: |
           release=$(cat .github/frontend-release)
           mkdir -p .build/frontend-dist
-          curl -fsSL "https://github.com/wendevlin/guest-assistant-frontend/releases/download/${release}/guest-assistant-frontend.tar.gz" \
-            | tar -xz -C .build/frontend-dist
+          curl -fsSL -o .build/guest-assistant-frontend.tar.gz \
+            "https://github.com/wendevlin/guest-assistant-frontend/releases/download/${release}/guest-assistant-frontend.tar.gz"
+          # A release asset can be replaced after it was published: unpack it
+          # only if it is the one that was pinned.
+          (cd .build && sha256sum --strict -c ../.github/frontend-release.sha256)
+          tar -xzf .build/guest-assistant-frontend.tar.gz -C .build/frontend-dist
 
       - name: Package
         run: scripts/build-addon.sh --frontend .build/frontend-dist
@@ -145,7 +153,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Create tag
         env:
           VERSION: ${{ needs.release.outputs.version }}

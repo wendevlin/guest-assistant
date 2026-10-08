@@ -3,9 +3,10 @@ import { resolve, sep } from "node:path";
 import { createAdmin } from "./admin/routes";
 import type { AdminSessions } from "./admin/sessions";
 import { createGuard } from "./auth/guard";
+import { createAuthHandler } from "./auth/handler";
 import { createHassTokenHandler } from "./auth/hass-token";
 import { serveFrontendFile } from "./csp";
-import { revokeTokens } from "./jwt";
+import { revokeSession, revokeTokens } from "./jwt";
 import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
 import type { Runtime } from "./runtime";
@@ -39,6 +40,12 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
   const wsProxy = createWsProxy(endpoint, runtime.dashboards);
   const httpRoutes = createHttpRoutes(endpoint, requireGuest);
   const hassToken = createHassTokenHandler(runtime);
+  // A sign-out ends the tokens of that session and the connections made
+  // with them; the guest's other devices stay signed in.
+  const authHandler = createAuthHandler(runtime, (sessionId) => {
+    revokeSession(sessionId);
+    wsProxy.closeForSession(sessionId);
+  });
   const admin = runtime.mode === "standalone" ? createAdmin(runtime, sessions, { base: ADMIN_BASE }) : null;
 
   // A dashboard that turns invalid drops its guests immediately; a changed
@@ -101,7 +108,7 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
     maxRequestBodySize: MAX_BODY_BYTES,
     routes: {
       "/api/auth/hass-token": { GET: hassToken },
-      "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => runtime.auth.handler(withClientIp(req, server)),
+      "/api/auth/*": (req: BunRequest, server: Server<ConnState>) => authHandler(withClientIp(req, server)),
       // Lets the frontend tell "proxy unreachable" from "proxy cannot reach
       // HA" while it reconnects. Public like HA's own /manifest.json; it only
       // reveals whether the upstream connection is up.

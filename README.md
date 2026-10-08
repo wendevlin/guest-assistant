@@ -191,8 +191,11 @@ on their device only.
 ## What to know before exposing it
 
 - The database in `DATA_DIR` holds the proxy's HA token, the guests' password
-  hashes and their sessions. It is created with mode 0600 in a 0700
-  directory; whoever can read it can act as the proxy's HA user.
+  hashes and their sessions. On every start the proxy sets the directory to
+  mode 0700 and the database files to 0600, and does not start if it cannot;
+  whoever can read them can act as the proxy's HA user. The app image runs
+  the proxy as the unprivileged user `bun` (uid 1000) and hands `DATA_DIR` to
+  that user first.
 - The setup code is printed to the log and stays valid until set-up is done.
   Anyone who can read the log can start the set-up (they still need HA admin
   credentials to finish it).
@@ -200,8 +203,12 @@ on their device only.
   proxy or Docker's port forwarding all guests share one address, so one
   misbehaving client can lock out the sign-in for everyone for a minute.
 - Deleting a guest, changing their password or dashboard ends their
-  connections and refuses the tokens they still hold. Sessions do not
-  survive a restart of the proxy.
+  connections and refuses the tokens they still hold. Signing out does the
+  same for that one device; the guest's other devices stay signed in.
+  Sessions do not survive a restart of the proxy.
+- Session cookies are marked `Secure` when the guest address is https or
+  the reverse proxy sends `X-Forwarded-Proto: https`. Behind a
+  TLS-terminating proxy that does neither, they go out without it.
 - This is alpha software. Read the "What a guest can do" table as the
   contract; anything not listed there is meant to be denied, and a way
   around it is a bug worth reporting.
@@ -242,7 +249,12 @@ creates the tag. The Supervisor already offers the update once the version is
 on `main`, so installing can fail with a 404 for the few minutes the build
 takes. Pushing a matching tag by hand releases as well.
 The guest page in the image is the frontend release named in
-`.github/frontend-release`; bump that file to ship a newer frontend.
+`.github/frontend-release`. CI unpacks its asset only if its SHA-256 matches
+`.github/frontend-release.sha256` (`sha256sum` format), so an asset replaced
+after the release cannot reach the image. To ship a newer frontend, run
+`scripts/pin-frontend.sh <release>`: it downloads the asset and writes both
+files. The hash is whatever GitHub serves at that moment, so pin a release
+you know and commit both files together.
 
 The admin page lives in `admin-ui/`: Svelte 5 with shadcn-svelte components,
 built by Bun alone (`admin-ui/build.ts` with `bun-plugin-svelte` and
@@ -255,7 +267,7 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 ## Endpoints the frontend uses
 
 - Admin page: `/admin/` and its JSON API under `/admin/api/` (mutating calls need the header `x-guest-assistant: 1`)
-- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out`
+- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out` (the only better-auth endpoints that answer, each with exactly this method)
 - `GET /api/auth/hass-token` → `{ access_token, refresh_token, expires_in, dashboard_url_path }`
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
 - `GET /api/states`, `/api/camera_proxy/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`

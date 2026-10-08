@@ -103,6 +103,14 @@ function keyIn(allowed: readonly string[]) {
   };
 }
 
+/**
+ * table[key] for own keys only. Keys come from guests, and a plain lookup of
+ * e.g. "constructor" finds Object.prototype's.
+ */
+function lookup<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 const A = (ctx: CommandContext) => ctx.dashboard.entities;
 
 // ── subscribe_events ─────────────────────────────────────────────────────
@@ -136,6 +144,12 @@ function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Ob
     }
     case "device_registry_updated":
       return typeof data.device_id === "string" && ctx.dashboard.allowedDevices.has(data.device_id) ? event : DROP;
+    case "service_registered":
+    case "service_removed":
+      // Every script is registered as a service of its own, and legacy notify
+      // targets are named after people's phones. Only services the guest may
+      // call are announced, as in get_services.
+      return serviceVisible(data.domain, data.service, ctx) ? event : DROP;
     case "core_config_updated":
       // HA puts the changed settings in the event, e.g. a new location or
       // external URL, which get_config hides from guests. The frontend only
@@ -193,6 +207,19 @@ const ENTITY_SERVICES: Record<string, readonly string[]> = {
 };
 
 const HOMEASSISTANT_SERVICES = new Set(["turn_on", "turn_off", "toggle"]);
+
+/**
+ * Whether a guest may see a service: exactly the services `call_service`
+ * accepts for some entity on the dashboard. Everything else HA registers,
+ * such as one service per script or a notify service per phone, stays hidden.
+ */
+function serviceVisible(domain: unknown, service: unknown, ctx: CommandContext): boolean {
+  if (typeof domain !== "string" || typeof service !== "string") return false;
+  if (domain === "homeassistant") return HOMEASSISTANT_SERVICES.has(service);
+  if (!ctx.dashboard.allowedDomains.has(domain) || !Object.hasOwn(ENTITY_SERVICES, domain)) return false;
+  return ENTITY_SERVICES[domain]!.includes(service);
+}
+
 const TARGET_SELECTOR_KEYS = ["entity_id", "device_id", "area_id", "label_id", "floor_id"];
 
 /**
@@ -274,10 +301,10 @@ function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
     // where the per-service checks below would not run.
     if (serviceData && Object.keys(serviceData).length > 0) return reject("service_data not allowed for homeassistant services");
   } else {
-    const allowed = ENTITY_SERVICES[domain];
+    const allowed = lookup(ENTITY_SERVICES, domain);
     if (!allowed || !allowed.includes(service)) return reject("service not allowed");
     if (!ids.every((id) => entityDomain(id) === domain)) return reject("target domain mismatch");
-    const check = SERVICE_DATA_CHECKS[`${domain}.${service}`];
+    const check = lookup(SERVICE_DATA_CHECKS, `${domain}.${service}`);
     const error = check?.(serviceData ?? {}, ctx, ids);
     if (error) return reject(error);
   }
@@ -401,7 +428,10 @@ export const COMMANDS: Record<string, CommandSpec> = {
   ping: { fields: [] },
   get_states: { fields: [], filterResult: (r, ctx) => F.filterStates(r, A(ctx)) },
   get_config: { fields: [], filterResult: (r) => F.scrubConfig(r) },
-  get_services: { fields: [], filterResult: (r, ctx) => F.filterServices(r, ctx.dashboard.allowedDomains) },
+  get_services: {
+    fields: [],
+    filterResult: (r, ctx) => F.filterServices(r, ctx.dashboard.allowedDomains, (domain, service) => serviceVisible(domain, service, ctx)),
+  },
   get_panels: { fields: [], filterResult: (r, ctx) => F.filterPanels(r, ctx.dashboard.id) },
   supported_features: { fields: ["features"] },
   call_service: { fields: ["domain", "service", "target", "service_data", "return_response"], validate: validateCallService },
@@ -557,7 +587,18 @@ export const COMMANDS: Record<string, CommandSpec> = {
     validate: validateRenderTemplate,
   },
   // Dashboard visibility conditions, evaluated by HA (see dashboard/conditions.ts)
-  subscribe_condition: { fields: ["condition"], subscription: true, validate: validateSubscribeCondition },
+  subscribe_condition: {
+    fields: ["condition"],
+    subscription: true,
+    validate: validateSubscribeCondition,
+    // HA adds error texts, e.g. "int got invalid input 'abc'" from an admin's
+    // template condition, which quote entities outside the allowlist.
+    // Guests get the outcome only.
+    filterEvent: (event) =>
+      isObj(event) && event.error === undefined
+        ? { result: typeof event.result === "boolean" ? event.result : null }
+        : { error: "Condition could not be evaluated" },
+  },
   "media_source/resolve_media": {
     fields: ["media_content_id", "expires"],
     validate: (msg, ctx) =>
@@ -568,8 +609,8 @@ export const COMMANDS: Record<string, CommandSpec> = {
 
   // Misc read-only
   "sensor/numeric_device_classes": { fields: [] },
-  "manifest/list": { fields: ["integrations"] },
-  "manifest/get": { fields: ["integration"] },
+  // manifest/list and manifest/get are not offered: they describe every
+  // installed integration, and only admin views of the frontend use them.
 };
 
 // ── evaluation ───────────────────────────────────────────────────────────
@@ -581,7 +622,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
 export function evaluate(msg: Obj, ctx: CommandContext): Verdict {
   const type = msg.type;
   if (typeof type !== "string") return reject("type required");
-  const spec = COMMANDS[type];
+  const spec = commandSpec(type);
   if (!spec) return reject(`command "${type}" not permitted`);
 
   const picked: Obj = { id: msg.id, type };
@@ -592,4 +633,9 @@ export function evaluate(msg: Obj, ctx: CommandContext): Verdict {
   }
 
   return spec.validate ? spec.validate(picked, ctx) : forward(picked);
+}
+
+/** The table entry for a command type; never one inherited from Object.prototype. */
+export function commandSpec(type: string): CommandSpec | undefined {
+  return lookup(COMMANDS, type);
 }
