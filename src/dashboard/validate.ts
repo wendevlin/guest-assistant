@@ -167,8 +167,30 @@ function checkElement(node: Obj, path: string): Violation[] {
     if (type === "map" && node.geo_location_sources !== undefined) {
       out.push(v("dynamic-card", path, "Map card with geo_location_sources shows entities dynamically"));
     }
-    if (type.startsWith("picture") && typeof node.image === "string" && !IMAGE_PREFIXES.some((p) => (node.image as string).startsWith(p))) {
-      out.push(v("image-source", `${path}.image`, `Image source "${node.image}" cannot be verified`));
+  }
+  // Images of cards, rows, badges and picture elements (anything with a type
+  // or an entity), not keys of the same name elsewhere, such as action data.
+  if (type || "entity" in node) out.push(...checkImages(node, path));
+  return out;
+}
+
+/**
+ * Image sources: `image`, `dark_mode_image` and the per-state `state_image`
+ * values, each a URL or a `{ media_content_id }` object.
+ */
+function checkImages(node: Obj, path: string): Violation[] {
+  const sources: Array<[string, unknown]> = [
+    [`${path}.image`, node.image],
+    [`${path}.dark_mode_image`, node.dark_mode_image],
+  ];
+  if (isObj(node.state_image)) {
+    for (const [state, value] of Object.entries(node.state_image)) sources.push([`${path}.state_image.${state}`, value]);
+  }
+  const out: Violation[] = [];
+  for (const [at, value] of sources) {
+    const source = isObj(value) ? value.media_content_id : value;
+    if (typeof source === "string" && !IMAGE_PREFIXES.some((p) => source.startsWith(p))) {
+      out.push(v("image-source", at, `Image source "${source}" cannot be verified`));
     }
   }
   return out;

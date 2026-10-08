@@ -155,7 +155,7 @@ describe("call_service", () => {
 
     const song = "media-source://media_source/local/song.mp3";
     expect(call("play_media", "media_player.living", { media_content_id: song, media_content_type: "music" })).toBe("forward");
-    expect(call("play_media", "media_player.living", { media_content_id: "https://example.com/a.mp3", media_content_type: "music" })).toBe("forward");
+    expect(call("play_media", "media_player.living", { media_content_id: "https://example.com/a.mp3", media_content_type: "music" })).toBe("reject");
     expect(call("play_media", "media_player.living", { media_content_id: "media-source://camera/camera.bedroom", media_content_type: "video" })).toBe("reject");
     expect(call("play_media", "media_player.living", { media: { media_content_id: "media-source://camera/camera.bedroom" } })).toBe("reject");
 
@@ -180,7 +180,6 @@ describe("call_service", () => {
 describe("lovelace", () => {
   test("lovelace resources (custom JavaScript) are answered as empty", () => {
     expect(run({ type: "lovelace/resources" })).toEqual({ kind: "reply", result: [] });
-    expect(run({ type: "lovelace/resources/list" })).toEqual({ kind: "reply", result: [] });
   });
 
   test("lovelace/info is forwarded without parameters", () => {

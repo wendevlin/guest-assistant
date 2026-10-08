@@ -128,8 +128,6 @@ const ALLOWED_EVENT_TYPES = new Set([
   "area_registry_updated",
   "device_registry_updated",
   "floor_registry_updated",
-  "label_registry_updated",
-  "category_registry_updated",
 ]);
 
 function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Obj): unknown | typeof DROP {
@@ -137,10 +135,18 @@ function filterSubscribedEvent(event: unknown, ctx: CommandContext, original: Ob
   const data = isObj(event.data) ? event.data : {};
   switch (original.event_type) {
     case "state_changed":
-      return typeof data.entity_id === "string" && A(ctx).has(data.entity_id) ? event : DROP;
+      return typeof data.entity_id === "string" && A(ctx).has(data.entity_id) ? F.filterStateChangedEvent(event) : DROP;
     case "entity_registry_updated": {
       const ids = [data.entity_id, data.old_entity_id].filter((x): x is string => typeof x === "string");
-      return ids.some((id) => A(ctx).has(id)) ? event : DROP;
+      if (!ids.some((id) => A(ctx).has(id))) return DROP;
+      // `changes` holds the old values. A changed unique_id is left out, as
+      // in the registry entries themselves (see ws-filters).
+      if (isObj(data.changes) && "unique_id" in data.changes) {
+        const changes: Obj = { ...data.changes };
+        delete changes.unique_id;
+        return { ...event, data: { ...data, changes } };
+      }
+      return event;
     }
     case "device_registry_updated":
       return typeof data.device_id === "string" && ctx.dashboard.allowedDevices.has(data.device_id) ? event : DROP;
@@ -237,13 +243,13 @@ const SERVICE_DATA_CHECKS: Record<string, (data: Obj, ctx: CommandContext, ids: 
   "media_player.unjoin": (_data, ctx, ids) =>
     ids.every((id) => ctx.dashboard.mediaGroupAllowed(id)) ? null : "grouping not allowed for this player",
   "media_player.play_media": (data, ctx) => {
-    // media-source ids can address other entities (media-source://camera/…)
-    // and local media; only ids written into the dashboard are allowed.
-    const ids = [data.media_content_id, isObj(data.media) ? data.media.media_content_id : undefined];
-    for (const v of ids) {
-      if (typeof v === "string" && v.startsWith("media-source://") && !ctx.dashboard.mediaSources.has(v)) return "media_content_id not allowed";
-    }
-    return null;
+    // Only content that an action on the dashboard plays: any other id could
+    // be a URL of the guest's choosing or a media-source id that addresses
+    // other entities (media-source://camera/…) or local media.
+    if (data.media !== undefined && !isObj(data.media)) return "media not allowed";
+    const ids = [data.media_content_id, isObj(data.media) ? data.media.media_content_id : undefined].filter((v) => v !== undefined);
+    if (ids.length === 0) return "media_content_id required";
+    return ids.every((v) => typeof v === "string" && ctx.dashboard.mediaContentIds.has(v)) ? null : "media_content_id not allowed";
   },
   // Script/automation variables can carry entity ids into the script.
   "script.turn_on": (data) => ("variables" in data ? "variables not allowed" : null),
@@ -257,7 +263,24 @@ function containsTemplate(value: unknown): boolean {
   return false;
 }
 
-function validateCallService(msg: Obj, ctx: CommandContext): Verdict {
+/**
+ * The more-info dialog of a script runs it through the script's own service,
+ * `script.<object_id>`, without a target. Guests only get script.turn_on, so
+ * that call is mapped to script.turn_on on the script entity, if it is on the
+ * dashboard. Data would be script variables, which guests may not pass.
+ */
+function scriptRunAsTurnOn(msg: Obj, ctx: CommandContext): Obj {
+  if (msg.domain !== "script" || typeof msg.service !== "string" || ENTITY_SERVICES.script!.includes(msg.service)) return msg;
+  const entityId = `script.${msg.service}`;
+  if (!isEntityId(entityId) || !A(ctx).has(entityId) || msg.target !== undefined) return msg;
+  if (msg.service_data !== undefined && !(isObj(msg.service_data) && Object.keys(msg.service_data).length === 0)) return msg;
+  const out: Obj = { ...msg, service: "turn_on", target: { entity_id: entityId } };
+  delete out.service_data;
+  return out;
+}
+
+function validateCallService(original: Obj, ctx: CommandContext): Verdict {
+  const msg = scriptRunAsTurnOn(original, ctx);
   const { domain, service } = msg;
   if (typeof domain !== "string" || typeof service !== "string") return reject("domain/service required");
   if (msg.return_response !== undefined && msg.return_response !== false) return reject("return_response not allowed");
@@ -509,13 +532,20 @@ export const COMMANDS: Record<string, CommandSpec> = {
   // wallpanel). Guest dashboards cannot use custom cards, so guests get an
   // empty list and no foreign code runs in the guest UI.
   "lovelace/resources": { fields: [], validate: () => ({ kind: "reply", result: [] }) },
-  "lovelace/resources/list": { fields: [], validate: () => ({ kind: "reply", result: [] }) },
 
   // Registries
   "config/entity_registry/list": { fields: [], filterResult: (r, ctx) => F.filterEntityRegistry(r, A(ctx)) },
   "config/entity_registry/list_for_display": { fields: [], filterResult: (r, ctx) => F.filterEntityRegistryDisplay(r, A(ctx)) },
-  "config/entity_registry/get": { fields: ["entity_id"], validate: requireEntity("entity_id") },
-  "config/entity_registry/get_entries": { fields: ["entity_ids"], validate: requireEntityList("entity_ids") },
+  "config/entity_registry/get": {
+    fields: ["entity_id"],
+    validate: requireEntity("entity_id"),
+    filterResult: (r, ctx) => F.filterEntityRegistryEntry(r, A(ctx)),
+  },
+  "config/entity_registry/get_entries": {
+    fields: ["entity_ids"],
+    validate: requireEntityList("entity_ids"),
+    filterResult: (r, ctx) => F.filterEntityRegistryEntries(r, A(ctx)),
+  },
   "config/device_registry/list": { fields: [], filterResult: (r, ctx) => F.filterDeviceRegistry(r, ctx.dashboard.allowedDevices) },
   "config/area_registry/list": { fields: [] },
   "config/floor_registry/list": { fields: [] },
@@ -567,7 +597,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
   "camera/webrtc/offer": { fields: ["entity_id", "offer"], subscription: true, validate: requireEntity("entity_id", "camera") },
   "camera/webrtc/candidate": { fields: ["entity_id", "session_id", "candidate"], validate: requireEntity("entity_id", "camera") },
 
-  // Todo & weather
+  // Todo, weather & update
   "todo/item/list": { fields: ["entity_id"], validate: requireEntity("entity_id", "todo") },
   "todo/item/subscribe": { fields: ["entity_id"], subscription: true, validate: requireEntity("entity_id", "todo") },
   "todo/item/move": { fields: ["entity_id", "uid", "previous_uid"], validate: requireEntity("entity_id", "todo") },
@@ -579,6 +609,8 @@ export const COMMANDS: Record<string, CommandSpec> = {
       return requireEntity("entity_id", "weather")(msg, ctx);
     },
   },
+  // more-info of update entities with the RELEASE_NOTES feature
+  "update/release_notes": { fields: ["entity_id"], validate: requireEntity("entity_id", "update") },
 
   // Templates & media
   render_template: {
@@ -607,8 +639,10 @@ export const COMMANDS: Record<string, CommandSpec> = {
         : reject("media_content_id not allowed"),
   },
 
-  // Misc read-only
-  "sensor/numeric_device_classes": { fields: [] },
+  // Maps (map card, person more-info): a token for HA's map tile proxy, which
+  // the frontend adds to its /api/map_tiles/* requests (see proxy/http.ts).
+  "map_tiles/access_token": { fields: [] },
+
   // manifest/list and manifest/get are not offered: they describe every
   // installed integration, and only admin views of the frontend use them.
 };
