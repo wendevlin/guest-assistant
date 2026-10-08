@@ -242,6 +242,12 @@ there builds into that directory. The fork lives at
 (branch `guest-assistant`); every push there publishes the built guest page as
 a release.
 
+The guest page is sent with a Content-Security-Policy (`src/csp.ts`): scripts
+only from the proxy itself plus the SHA-256 hashes of the inline scripts in the
+served `index.html`, computed again whenever the file changes; no frames, no
+`eval`. Images may come from anywhere, since picture cards and entity pictures
+can point to other hosts.
+
 ### Releases
 
 `.github/workflows/build.yaml` typechecks and tests every push. To release,

@@ -5,6 +5,7 @@ import type { AdminSessions } from "./admin/sessions";
 import { createGuard } from "./auth/guard";
 import { createAuthHandler } from "./auth/handler";
 import { createHassTokenHandler } from "./auth/hass-token";
+import { serveFrontendFile } from "./csp";
 import { revokeSession, revokeTokens } from "./jwt";
 import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
@@ -79,8 +80,9 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
   // anything else under /static.
   const haStatic = httpRoutes["/static/*"].GET;
   const staticHandler = async (req: BunRequest) => {
-    const file = await frontendFile(new URL(req.url).pathname);
-    return file ? new Response(file) : haStatic(req);
+    const url = new URL(req.url);
+    const file = await frontendFile(url.pathname);
+    return file ? serveFrontendFile(file, url.host) : haStatic(req);
   };
 
   async function serveFrontend(request: Request): Promise<Response> {
@@ -92,16 +94,9 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
       return new Response("Not Found", { status: 404 });
     }
 
-    const file = await frontendFile(url.pathname);
-    if (file) return new Response(file);
-
-    if (request.headers.get("accept")?.includes("text/html")) {
-      const index = Bun.file(resolve(frontendRoot, "index.html"));
-      if (await index.exists()) {
-        return new Response(index, { headers: { "Content-Type": "text/html" } });
-      }
-    }
-    return new Response("Not Found", { status: 404 });
+    let file = await frontendFile(url.pathname);
+    if (!file && request.headers.get("accept")?.includes("text/html")) file = await frontendFile("/index.html");
+    return file ? serveFrontendFile(file, url.host) : new Response("Not Found", { status: 404 });
   }
 
   const adminHandler = (req: BunRequest, server: Server<ConnState>) =>
