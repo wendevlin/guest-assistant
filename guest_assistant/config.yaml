@@ -4,7 +4,7 @@
 # line, so the Supervisor builds the Dockerfile on the device.
 name: Guest Assistant
 description: Give guests their own login to exactly one dashboard
-version: "0.7.0"
+version: "0.7.1"
 slug: guest_assistant
 url: https://github.com/wendevlin/guest-assistant
 arch:
