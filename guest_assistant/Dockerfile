@@ -15,8 +15,8 @@ WORKDIR /app
 ADD app.tar.gz ./
 RUN bun install --production --frozen-lockfile
 
-ENV PORT=3001 INGRESS_PORT=8099 DATA_DIR=/data
-EXPOSE 3001 8099
+ENV PORT=3123 INGRESS_PORT=8099 DATA_DIR=/data
+EXPOSE 3123 8099
 # The proxy runs as `bun`, not root (entrypoint.sh); both ports are unprivileged.
 ENTRYPOINT ["/usr/local/bin/guest-assistant-entrypoint"]
 CMD ["bun", "run", "src/index.ts"]

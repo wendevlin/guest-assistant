@@ -35,7 +35,7 @@ function intVar(name: string, fallback: number): number {
 export function readEnv(): Env {
   const supervisorToken = process.env.SUPERVISOR_TOKEN || undefined;
   return {
-    port: intVar("PORT", 3001),
+    port: intVar("PORT", 3123),
     dataDir: resolve(process.env.DATA_DIR ?? (supervisorToken ? "/data" : "data")),
     frontendRepo: process.env.GUEST_ASSISTANT_FRONTEND_REPO || undefined,
     supervisorToken,

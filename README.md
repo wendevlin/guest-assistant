@@ -121,8 +121,12 @@ do not put such templates on guest dashboards.
 
 ## Installing as a Home Assistant app
 
-This repository is also a Home Assistant app repository. In Home Assistant go
-to Settings > Apps > App store > ⋮ > Repositories, add
+This repository is also a Home Assistant app repository. Add it to your Home
+Assistant with this button:
+
+[![Open your Home Assistant instance and show the add app repository dialog with this repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fwendevlin%2Fguest-assistant)
+
+Or add it by hand: in Home Assistant go to Settings > Apps > App store > ⋮ > Repositories, add
 `https://github.com/wendevlin/guest-assistant` and install "Guest Assistant".
 The Supervisor pulls the prebuilt image for your machine (amd64 or aarch64).
 `guest_assistant/DOCS.md` is the documentation shown in Home Assistant.
@@ -143,7 +147,7 @@ There is no configuration file. Everything is managed on the admin page.
 **Standalone** (Docker, a server next to HA, development):
 
 1. Start the proxy. The log prints a one-time setup code and the admin page,
-   `http://<proxy>:3001/admin/`. A code is valid for an hour; until set-up is
+   `http://<proxy>:3123/admin/`. A code is valid for an hour; until set-up is
    done, a new one is printed every hour.
 2. Enter the code, then pick your Home Assistant. The proxy looks for
    instances on the network (zeroconf; needs host networking in Docker) and
@@ -194,7 +198,7 @@ A few settings are environment variables (Bun also reads a `.env` file, see
 
 | Variable | Default | |
 |---|---|---|
-| `PORT` | `3001` | guest port; standalone, the admin page is under `/admin/` |
+| `PORT` | `3123` | guest port; standalone, the admin page is under `/admin/` |
 | `DATA_DIR` | `data` (`/data` as an app) | SQLite database |
 | `GUEST_ASSISTANT_FRONTEND_REPO` | | serve the guest frontend from a `guest-assistant-frontend` checkout instead of `./public` |
 | `INGRESS_PORT` | `8099` | admin page as an app |
