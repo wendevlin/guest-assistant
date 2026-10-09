@@ -19,11 +19,11 @@ panel_icon: mdi:home-account
 panel_title: Guest Assistant
 panel_admin: true
 # Port guests open. It is not behind HA's login. The host port can be changed
-# on the app's Configuration tab under "Network"; inside the container it stays 3001.
+# on the app's Configuration tab under "Network"; inside the container it stays 3123.
 ports:
-  3001/tcp: 3001
+  3123/tcp: 3123
 ports_description:
-  3001/tcp: Guest page (port guests open, not behind the HA login)
+  3123/tcp: Guest page (port guests open, not behind the HA login)
 # Lets the app create its own non-admin HA user through the Supervisor.
 homeassistant_api: true
 hassio_api: true

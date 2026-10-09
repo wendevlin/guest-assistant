@@ -147,7 +147,7 @@ There is no configuration file. Everything is managed on the admin page.
 **Standalone** (Docker, a server next to HA, development):
 
 1. Start the proxy. The log prints a one-time setup code and the admin page,
-   `http://<proxy>:3001/admin/`. A code is valid for an hour; until set-up is
+   `http://<proxy>:3123/admin/`. A code is valid for an hour; until set-up is
    done, a new one is printed every hour.
 2. Enter the code, then pick your Home Assistant. The proxy looks for
    instances on the network (zeroconf; needs host networking in Docker) and
@@ -198,7 +198,7 @@ A few settings are environment variables (Bun also reads a `.env` file, see
 
 | Variable | Default | |
 |---|---|---|
-| `PORT` | `3001` | guest port; standalone, the admin page is under `/admin/` |
+| `PORT` | `3123` | guest port; standalone, the admin page is under `/admin/` |
 | `DATA_DIR` | `data` (`/data` as an app) | SQLite database |
 | `GUEST_ASSISTANT_FRONTEND_REPO` | | serve the guest frontend from a `guest-assistant-frontend` checkout instead of `./public` |
 | `INGRESS_PORT` | `8099` | admin page as an app |

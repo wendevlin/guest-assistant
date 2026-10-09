@@ -13,7 +13,7 @@
    choice applies.
 4. Guests: add a guest, choose the dashboard and pass on the username and
    password. Switch a guest off while they are not visiting.
-5. Guests open `http://<home-assistant-host>:3001`.
+5. Guests open `http://<home-assistant-host>:3123`.
 
 To use another port for guests, change it on the Configuration tab under
 "Network" and restart the app.
