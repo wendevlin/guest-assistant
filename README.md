@@ -304,10 +304,13 @@ can point to other hosts.
 ### Releases
 
 `.github/workflows/build.yaml` typechecks and tests every push. To release,
-bump `version` in `guest_assistant/config.yaml` and merge to `main`: when that
-version has no tag `vX.Y.Z` yet, the workflow builds the app images for amd64
-and aarch64, pushes them to `ghcr.io/wendevlin/{arch}-guest-assistant` and then
-creates the tag. The Supervisor already offers the update once the version is
+bump `version` in `guest_assistant/config.yaml`, add an entry for it at the
+top of `guest_assistant/CHANGELOG.md` and merge to `main`. The Supervisor
+shows the changelog before an update, so write it for the people who install
+the app; `bun test` fails while its first entry is not the version in
+`config.yaml`. When that version has no tag `vX.Y.Z` yet, the workflow builds
+the app images for amd64 and aarch64, pushes them to
+`ghcr.io/wendevlin/{arch}-guest-assistant` and then creates the tag. The Supervisor already offers the update once the version is
 on `main`, so installing can fail with a 404 for the few minutes the build
 takes. Pushing a matching tag by hand releases as well.
 The guest page in the image is the frontend release named in
