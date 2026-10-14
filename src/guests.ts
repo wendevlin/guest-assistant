@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import z from "zod";
 import type { Auth } from "./auth";
 
@@ -124,6 +125,25 @@ export class Guests {
     if (endSessions) await adapter.deleteUserSessions(id);
     return (await this.get(id))!;
   }
+
+  /**
+   * Checks a guest's username and password without creating a session
+   * (companion app logins keep their own record, see companion/tokens.ts).
+   * Unknown usernames are checked against a dummy hash, so the answer takes
+   * as long as for a wrong password. Disabled guests are returned too; the
+   * caller tells them apart.
+   */
+  async verifyPassword(username: string, password: string): Promise<Guest | null> {
+    const { ctx, adapter } = await this.adapter();
+    this.dummyHash ??= ctx.password.hash(randomBytes(16).toString("hex"));
+    const parsed = Username.safeParse(username);
+    const found = parsed.success ? await adapter.findUserByEmail(emailFor(parsed.data), { includeAccounts: true }) : null;
+    const credential = found?.accounts.find((a) => a.providerId === "credential" && a.password);
+    const ok = await ctx.password.verify({ password, hash: credential?.password ?? (await this.dummyHash) });
+    return ok && found && credential ? toGuest(found.user as unknown as UserRow) : null;
+  }
+
+  private dummyHash?: Promise<string>;
 
   async delete(id: string): Promise<void> {
     const { adapter } = await this.adapter();

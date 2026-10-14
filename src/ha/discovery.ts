@@ -26,7 +26,7 @@ interface Service {
  * the TXT record. Needs multicast, i.e. host networking in containers;
  * returns an empty list where that is not available.
  */
-export async function discoverHomeAssistant(timeoutMs = 2500): Promise<DiscoveredHa[]> {
+export async function discoverHomeAssistant(timeoutMs = 2500, { excludeUuid }: { excludeUuid?: string } = {}): Promise<DiscoveredHa[]> {
   let mdns: ReturnType<typeof mdnsFactory>;
   try {
     mdns = mdnsFactory();
@@ -70,6 +70,8 @@ export async function discoverHomeAssistant(timeoutMs = 2500): Promise<Discovere
   const found = new Map<string, DiscoveredHa>();
   for (const [key, s] of services) {
     const uuid = s.txt.uuid ?? key;
+    // Guest Assistant announces itself to the companion apps; it is not a Home Assistant to connect to.
+    if (excludeUuid && uuid === excludeUuid) continue;
     const address = s.target ? addresses.get(s.target) : undefined;
     const fromAddress = address && s.port ? `http://${address}:${s.port}` : undefined;
     const urls = [s.txt.internal_url, s.txt.base_url, s.txt.external_url, fromAddress].filter((u): u is string => !!u);

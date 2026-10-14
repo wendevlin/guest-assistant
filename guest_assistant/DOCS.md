@@ -15,8 +15,32 @@
    password. Switch a guest off while they are not visiting.
 5. Guests open `http://<home-assistant-host>:3123`.
 
-To use another port for guests, change it on the Configuration tab under
-"Network" and restart the app.
+Guests always open port 3123: the app uses host networking (for the
+companion app's discovery, see below), so the port cannot be changed under
+"Network".
+
+## Companion app
+
+Guests can also use the Home Assistant app on their phone instead of the
+browser. It is off by default:
+
+1. Settings tab: switch on "Allow the companion app". From then on Guest
+   Assistant answers the app like a Home Assistant server would.
+2. Optional: switch on "Show in the app's server list on this network", so
+   the app lists Guest Assistant (under the app name) when a guest adds a
+   server at home. Or send guests the link shown there, which opens the app
+   with Guest Assistant filled in.
+3. Guests sign in with their guest username and password and see their
+   dashboard. Their phones show up on the Guests tab, where you can sign a
+   phone out.
+4. Optional, per dashboard on the Dashboards tab: "Widgets in the companion
+   app" lets guests put the dashboard's entities on widgets, device
+   controls and their watch.
+
+The app's sensors, location tracking and notifications are not used:
+whatever it sends is acknowledged and dropped. Assist is not offered. Behind
+HTTPS on a public address the app skips its questions about the home
+network. Switching the companion app off signs every guest out of the app.
 
 ## Good to know
 

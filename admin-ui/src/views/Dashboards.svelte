@@ -6,6 +6,7 @@
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
+  import { Label } from "$lib/components/ui/label";
   import { Separator } from "$lib/components/ui/separator";
   import { Switch } from "$lib/components/ui/switch";
   import { api, type DashboardsView, type DashboardView, type QuestionView } from "$lib/api";
@@ -15,6 +16,9 @@
   import AddDashboard from "./AddDashboard.svelte";
   import Analysis from "./Analysis.svelte";
   import StatusBadges from "./StatusBadges.svelte";
+
+  /** Companion app support is on: the widgets switch is shown. */
+  let { companion = false }: { companion?: boolean } = $props();
 
   let data = $state<DashboardsView | null>(null);
   let error = $state<string | null>(null);
@@ -47,7 +51,7 @@
   }
 
   /** Changes take effect immediately; a short "Saved" confirms it. */
-  async function save(id: string, changes: { answers?: Record<string, string>; enabled?: boolean }) {
+  async function save(id: string, changes: { answers?: Record<string, string>; enabled?: boolean; widgets?: boolean }) {
     if (!(await run(() => api.updateDashboard(id, changes)))) return;
     saved = id;
     clearTimeout(savedTimer);
@@ -130,6 +134,19 @@
           <Separator />
           <div class="grid gap-6 px-5 py-5">
             <Analysis dashboard={d} onanswer={(q, value) => answer(d, q, value)} />
+            {#if companion}
+              <Separator />
+              <div class="flex items-start gap-3">
+                <Switch id="widgets-{d.id}" checked={d.widgets} onCheckedChange={(widgets) => save(d.id, { widgets })} />
+                <div class="grid gap-1">
+                  <Label for="widgets-{d.id}">Widgets in the companion app</Label>
+                  <p class="text-sm text-muted-foreground">
+                    Guests can put this dashboard's entities on widgets, device controls and their watch, and control them from there. Only
+                    the entities of this dashboard are offered. Off, the app only shows the dashboard itself.
+                  </p>
+                </div>
+              </div>
+            {/if}
             <Separator />
             <div>
               <Button variant="ghost" class="text-destructive hover:text-destructive" onclick={() => ((removing = d), (confirmOpen = true))}

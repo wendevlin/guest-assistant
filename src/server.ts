@@ -2,9 +2,12 @@ import type { BunRequest, Server } from "bun";
 import { resolve, sep } from "node:path";
 import { createAdmin } from "./admin/routes";
 import type { AdminSessions } from "./admin/sessions";
-import { createGuard } from "./auth/guard";
+import { createGuard, withWidgetCheck } from "./auth/guard";
 import { createAuthHandler } from "./auth/handler";
 import { createHassTokenHandler } from "./auth/hass-token";
+import { createMobileApp } from "./companion/mobile-app";
+import { createCompanionAuth } from "./companion/oauth";
+import { resolveGuestToken } from "./companion/tokens";
 import { serveFrontendFile } from "./csp";
 import { revokeSession, revokeTokens } from "./jwt";
 import { createHttpRoutes } from "./proxy/http";
@@ -12,7 +15,8 @@ import { createWsProxy, type ConnState } from "./proxy/ws";
 import { serveManifest, serveUnregisterWorker } from "./pwa";
 import type { Runtime } from "./runtime";
 
-const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/admin/"];
+// /auth/ is Home Assistant's OAuth (companion apps); never the guest page.
+const RESERVED_PREFIXES = ["/api/", "/auth/", "/static/", "/local/", "/admin/"];
 
 /** Standalone, the admin page lives here on the guest port. */
 export const ADMIN_BASE = "/admin/";
@@ -38,8 +42,12 @@ const MAX_BODY_BYTES = 1024 * 1024;
 export function createServer(runtime: Runtime, sessions: AdminSessions, port: number = runtime.env.port) {
   const requireGuest = createGuard(runtime);
   const endpoint = () => runtime.endpoint;
-  const wsProxy = createWsProxy(endpoint, runtime.dashboards);
-  const httpRoutes = createHttpRoutes(endpoint, requireGuest);
+  const wsProxy = createWsProxy(endpoint, runtime.dashboards, {
+    resolveToken: (token) => resolveGuestToken(token, runtime.appTokens),
+    haVersion: () => runtime.haVersion,
+  });
+  // Entity data reaches the companion app's native part only where widgets are allowed.
+  const httpRoutes = createHttpRoutes(endpoint, withWidgetCheck(requireGuest));
   const hassToken = createHassTokenHandler(runtime);
   // A sign-out ends the tokens of that session and the connections made
   // with them; the guest's other devices stay signed in.
@@ -58,6 +66,10 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
     wsProxy.closeForUser(id);
   });
   runtime.on("connectionChanged", () => wsProxy.closeAll());
+  runtime.on("appSessionsEnded", (ids) => {
+    for (const id of ids) wsProxy.closeForSession(id);
+  });
+  runtime.on("widgetsChanged", (d) => wsProxy.closeNativeForDashboard(d.id));
 
   // Like HA core's `development_repo`: point at the frontend repository root,
   // the build output inside it is served.
@@ -86,6 +98,18 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
   };
 
   const manifestHandler = async () => serveManifest(await frontendFile("/manifest.json"), runtime.appName);
+
+  // Companion app support (src/companion/); every route answers 404 while it is off.
+  const companionAuth = createCompanionAuth(runtime, {
+    async serveAuthorizePage(req) {
+      const file = await frontendFile("/authorize.html");
+      // A guest frontend from before companion app support has no such page.
+      return file
+        ? serveFrontendFile(file, req, { appName: runtime.appName })
+        : new Response("The guest frontend does not support the companion app yet.", { status: 503 });
+    },
+  });
+  const mobileApp = createMobileApp(runtime, requireGuest);
   const serviceWorkerHandler = async (req: BunRequest) => {
     const file = await frontendFile("/sw.js");
     return file ? serveFrontendFile(file, req) : serveUnregisterWorker();
@@ -126,6 +150,13 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
           ),
       },
       "/api/websocket": (req: BunRequest, server: Server<ConnState>) => wsProxy.upgrade(req, server),
+      "/api/guest-assistant/session": { GET: mobileApp.session },
+      "/api/mobile_app/registrations": { POST: mobileApp.register },
+      "/api/webhook/:id": { POST: mobileApp.webhook },
+      "/auth/authorize": { GET: companionAuth.authorize, HEAD: companionAuth.authorize },
+      "/auth/login_flow": { POST: companionAuth.loginFlow },
+      "/auth/token": { POST: companionAuth.token },
+      "/auth/revoke": { POST: companionAuth.revoke },
       // The installable app: its name is set on the admin page, and a build
       // without a service worker replaces one that an earlier build installed.
       "/manifest.json": { GET: manifestHandler, HEAD: manifestHandler },

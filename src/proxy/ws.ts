@@ -1,4 +1,6 @@
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
+import { isNativeApp } from "../auth/guard";
+import type { ResolvedToken, TokenKind } from "../companion/tokens";
 import type { Dashboard } from "../dashboard";
 import { haWsUrl, type HaEndpoint } from "../ha/endpoint";
 import { verifyJWT } from "../jwt";
@@ -9,8 +11,12 @@ type Phase = "awaiting_auth" | "connecting_ha" | "active" | "closed";
 export interface ConnState {
   phase: Phase;
   userId: string | null;
-  /** better-auth session the token was issued for; its sign-out closes the connection */
+  /** better-auth session or companion app login the token was issued for; its end closes the connection */
   sessionId: string | null;
+  /** the guest page's hass-token or a companion app token */
+  kind: TokenKind | null;
+  /** opened by the native part of a companion app (see isNativeApp) */
+  native: boolean;
   dashboard: Dashboard | null;
   haWs: WebSocket | null;
   /** commands sent upstream that await their result */
@@ -45,8 +51,14 @@ export const SEND_PER_SECOND = 20;
 export const CALL_SERVICE_BURST = 30;
 /** Service calls per second after the burst: more than a person taps, and each can become a radio command. */
 export const CALL_SERVICE_PER_SECOND = 3;
-/** Connections per guest account (devices, tabs); beyond it the oldest is closed and its page reconnects. */
-export const MAX_CONNECTIONS_PER_USER = 10;
+/**
+ * Connections per guest account (devices, tabs); beyond it the oldest is
+ * closed and its page reconnects. A companion app holds two per device (its
+ * native part and its web view).
+ */
+export const MAX_CONNECTIONS_PER_USER = 24;
+/** Connections per companion app login, so one device cannot push the others out. */
+export const MAX_CONNECTIONS_PER_APP_LOGIN = 4;
 /** Warnings per connection and minute; a guest's flood shows up as one summary line instead. */
 const LOG_LINES_PER_MINUTE = 10;
 /** Logged lines quote guest input, which may be up to MAX_MESSAGE_BYTES long. */
@@ -118,10 +130,18 @@ class TokenBucket {
   }
 }
 
-/** Subscriptions established plus those still waiting for HA's answer. */
+/** Subscriptions in HA: established plus those still waiting for HA's answer. */
 function subscriptionCount(conn: ConnState): number {
-  let count = conn.subscriptions.size;
+  let count = 0;
+  for (const { local } of conn.subscriptions.values()) if (!local) count++;
   for (const { type } of conn.pending.values()) if (commandSpec(type)?.subscription) count++;
+  return count;
+}
+
+/** Subscriptions the proxy answered itself; they cost HA nothing but are remembered here. */
+function localSubscriptionCount(conn: ConnState): number {
+  let count = 0;
+  for (const { local } of conn.subscriptions.values()) if (local) count++;
   return count;
 }
 
@@ -138,7 +158,28 @@ function overLimit(conn: ConnState, type: string): { code: string; message: stri
   return null;
 }
 
-export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: ReadonlyMap<string, Dashboard>) {
+/** The command context of a connection; native app connections on dashboards without widgets get the minimal set. */
+function contextOf(conn: ConnState, dashboard: Dashboard): CommandContext {
+  return { dashboard, subscriptions: conn.subscriptions, minimal: conn.kind === "app-token" && conn.native && !dashboard.widgets };
+}
+
+export interface WsProxyOptions {
+  /** Verifies a token of either kind; defaults to the guest page's hass-tokens only. */
+  resolveToken?: (token: string) => ResolvedToken | null;
+  /** HA's version, reported in `auth_required` (the companion apps pick features by it). */
+  haVersion?: () => string | undefined;
+}
+
+const hassTokensOnly = (token: string): ResolvedToken | null => {
+  const payload = verifyJWT(token);
+  return payload ? { payload, kind: "session-token" } : null;
+};
+
+export function createWsProxy(
+  endpoint: () => HaEndpoint | null,
+  dashboards: ReadonlyMap<string, Dashboard>,
+  { resolveToken = hassTokensOnly, haVersion = () => undefined }: WsProxyOptions = {},
+) {
   const all = new Set<GuestSocket>();
   const byUser = new Map<string, Set<GuestSocket>>();
   const byDashboard = new Map<string, Set<GuestSocket>>();
@@ -155,7 +196,14 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
   const connectionLog = new LogLimiter(() => "closed connections");
 
   function register(ws: GuestSocket): void {
-    const { userId, dashboard } = ws.data;
+    const { userId, dashboard, sessionId, kind } = ws.data;
+    if (kind === "app-token" && sessionId) {
+      const same = [...all].filter((other) => other.data.sessionId === sessionId);
+      if (same.length >= MAX_CONNECTIONS_PER_APP_LOGIN && same[0]) {
+        connectionLog.warn(`[ws-proxy] companion app login ${sessionId} has more than ${MAX_CONNECTIONS_PER_APP_LOGIN} connections; closing the oldest`);
+        terminate(same[0]);
+      }
+    }
     all.add(ws);
     if (userId) {
       const conns = byUser.get(userId) ?? byUser.set(userId, new Set()).get(userId)!;
@@ -197,8 +245,9 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     };
 
     if (msg.type !== "auth" || typeof msg.access_token !== "string") return fail("Expected auth");
-    const payload = verifyJWT(msg.access_token);
-    if (!payload) return fail("Invalid token");
+    const resolved = resolveToken(msg.access_token);
+    if (!resolved) return fail("Invalid token");
+    const { payload, kind } = resolved;
     const dashboard = dashboards.get(payload.dashboard);
     if (!dashboard) return fail("Invalid dashboard");
     if (!dashboard.usable) return fail("Dashboard not available");
@@ -208,6 +257,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
     ws.data.userId = payload.sub;
     ws.data.sessionId = payload.sid;
+    ws.data.kind = kind;
     ws.data.dashboard = dashboard;
     ws.data.phase = "connecting_ha";
     register(ws);
@@ -286,7 +336,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     }
     ws.data.lastId = id;
 
-    const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
+    const ctx = contextOf(ws.data, dashboard);
     let verdict: Verdict;
     try {
       verdict = evaluate(msg, ctx);
@@ -303,14 +353,29 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
         ws.data.log.warn(`[ws-proxy] rejected ${String(msg.type)} from user ${ws.data.userId}: ${verdict.message}`);
         sendError(ws, id, "Operation not permitted");
         return;
-      case "reply":
-        // Answered by the proxy: costs HA nothing and keeps no state here, so
-        // the limits below do not apply.
+      case "reply": {
+        // Answered by the proxy: costs HA nothing, so the rate limits below
+        // do not apply. A subscription answered here is remembered, so that
+        // unsubscribing it works and stays here as well.
+        const type = String(msg.type);
+        if (commandSpec(type)?.subscription) {
+          if (localSubscriptionCount(ws.data) >= MAX_SUBSCRIPTIONS) {
+            sendError(ws, id, "Too many subscriptions", "too_many_subscriptions");
+            return;
+          }
+          ws.data.subscriptions.set(id, { type, msg, local: true });
+        }
         send(ws, { id, type: "result", success: true, result: verdict.result });
         for (const event of verdict.events ?? []) send(ws, { id, type: "event", event });
         return;
+      }
       case "forward": {
         const type = String(verdict.msg.type);
+        if (type === "unsubscribe_events" && ws.data.subscriptions.get(verdict.msg.subscription as number)?.local) {
+          ws.data.subscriptions.delete(verdict.msg.subscription as number);
+          send(ws, { id, type: "result", success: true, result: null });
+          return;
+        }
         if (type === "unsubscribe_events") {
           // Never limited: it frees resources in HA, a refused one would leave
           // a stream running that the frontend has dropped, and each one ends
@@ -335,7 +400,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
   function handleUpstreamMessage(ws: GuestSocket, msg: Obj): void {
     const dashboard = ws.data.dashboard!;
-    const ctx: CommandContext = { dashboard, subscriptions: ws.data.subscriptions };
+    const ctx = contextOf(ws.data, dashboard);
     const id = msg.id;
 
     if (typeof id !== "number") {
@@ -403,7 +468,7 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     idleTimeout: 120,
 
     open(ws) {
-      send(ws, { type: "auth_required", ha_version: "2026.9" });
+      send(ws, { type: "auth_required", ha_version: haVersion() ?? "2026.9" });
     },
 
     message(ws, message) {
@@ -441,6 +506,8 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
       phase: "awaiting_auth",
       userId: null,
       sessionId: null,
+      kind: null,
+      native: isNativeApp(req),
       dashboard: null,
       haWs: null,
       pending: new Map(),
@@ -465,6 +532,11 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
 
   function closeForDashboard(dashboardId: string): void {
     for (const ws of [...(byDashboard.get(dashboardId) ?? [])]) terminate(ws);
+  }
+
+  /** After the widgets switch changed: native app connections reconnect into the new set of commands. */
+  function closeNativeForDashboard(dashboardId: string): void {
+    for (const ws of [...(byDashboard.get(dashboardId) ?? [])]) if (ws.data.native && ws.data.kind === "app-token") terminate(ws);
   }
 
   /**
@@ -499,5 +571,5 @@ export function createWsProxy(endpoint: () => HaEndpoint | null, dashboards: Rea
     for (const ws of [...all]) terminate(ws);
   }
 
-  return { handlers, upgrade, closeForUser, closeForSession, closeForDashboard, closeAll, dashboardChanged };
+  return { handlers, upgrade, closeForUser, closeForSession, closeForDashboard, closeNativeForDashboard, closeAll, dashboardChanged };
 }

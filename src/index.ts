@@ -1,4 +1,5 @@
 import { AdminSessions } from "./admin/sessions";
+import { Announcer } from "./companion/announce";
 import { readEnv } from "./env";
 import { ingressPanelPath } from "./ha/supervisor";
 import { Runtime } from "./runtime";
@@ -14,6 +15,8 @@ await runtime.init();
 const sessions = new AdminSessions();
 const { server } = createServer(runtime, sessions);
 console.log(`Guest Assistant listening on ${server.url}`);
+// Announces the proxy to the companion apps while the admin has switched that on.
+new Announcer(runtime).start();
 
 if (runtime.mode === "app") {
   const ingress = createIngressServer(runtime, sessions);

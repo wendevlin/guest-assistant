@@ -41,7 +41,7 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 
 const Answers = z.record(z.string().max(2000), z.string().max(50));
 const DashboardInput = z.strictObject({ id: z.string().min(1).max(200), answers: Answers.optional() });
-const DashboardPatch = z.strictObject({ answers: Answers.optional(), enabled: z.boolean().optional() });
+const DashboardPatch = z.strictObject({ answers: Answers.optional(), enabled: z.boolean().optional(), widgets: z.boolean().optional() });
 const GuestInput = z.strictObject({ username: Username, password: Password, dashboard: z.string().min(1), enabled: z.boolean().optional() });
 const GuestPatch = z.strictObject({ password: Password.optional(), dashboard: z.string().min(1).optional(), enabled: z.boolean().optional() });
 const SettingsInput = z.strictObject({
@@ -53,6 +53,7 @@ const SettingsInput = z.strictObject({
     .max(40)
     .regex(/^[^\p{Cc}]*$/u, "must not contain control characters")
     .optional(),
+  companion: z.strictObject({ enabled: z.boolean().optional(), discoverable: z.boolean().optional() }).optional(),
 });
 const UrlInput = z.strictObject({ url: z.string().min(1).max(500) });
 const CodeInput = z.strictObject({ code: z.string().min(1).max(20) });
@@ -132,7 +133,23 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         : null,
       public_url: identity?.kind === "admin" ? (runtime.publicUrl ?? null) : null,
       app_name: identity?.kind === "admin" ? (runtime.appName ?? null) : null,
+      companion: identity?.kind === "admin" ? { ...runtime.companion, discovery: runtime.discoveryStatus } : null,
     };
+  }
+
+  /** Guests with their companion app logins. */
+  async function guestsView() {
+    const guests = await runtime.guests.list();
+    return guests.map((g) => ({
+      ...g,
+      devices: runtime.appTokens.listForUser(g.id).map((row) => ({
+        id: row.id,
+        name: row.device?.device_name ?? null,
+        app: row.device ? `${row.device.app_name} ${row.device.app_version} (${row.device.os_name})` : null,
+        created_at: row.created_at,
+        last_used_at: row.last_used_at,
+      })),
+    }));
   }
 
   function dashboardView(d: Dashboard, title: string, guests: number) {
@@ -141,6 +158,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       title,
       status: d.status,
       enabled: d.enabled,
+      widgets: d.widgets,
       violations: d.violations,
       issues: d.issues,
       entities: d.entities.size,
@@ -259,7 +277,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       case "GET setup/discover":
         requireSetupRights(identity);
         if (appMode) return json([]);
-        return json(await discoverHomeAssistant());
+        return json(await discoverHomeAssistant(undefined, { excludeUuid: runtime.instanceId }));
 
       case "POST setup/connect": {
         requireSetupRights(identity);
@@ -306,15 +324,16 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         return json(await dashboardsView());
       }
       case "GET guests":
-        return json(await runtime.guests.list());
+        return json(await guestsView());
       case "POST guests": {
         const input = await body(req, GuestInput);
         return json(await runtime.createGuest(input), 201);
       }
       case "PUT settings": {
-        const { public_url, app_name } = await body(req, SettingsInput);
+        const { public_url, app_name, companion } = await body(req, SettingsInput);
         if (public_url !== undefined) await runtime.setPublicUrl(public_url || undefined);
         if (app_name !== undefined) runtime.setAppName(app_name || undefined);
+        if (companion !== undefined) runtime.setCompanion(companion);
         return json(stateView(identity));
       }
     }
@@ -335,6 +354,14 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         await runtime.removeDashboard(id);
         return json(await dashboardsView());
       }
+    }
+    const device = path.match(/^guests\/([^/]+)\/devices\/([^/]+)$/);
+    if (device && method === "DELETE") {
+      const guestId = decodeURIComponent(device[1]!);
+      const row = runtime.appTokens.get(decodeURIComponent(device[2]!));
+      if (!row || row.user_id !== guestId) throw new HttpError(404, "Device not found");
+      runtime.endAppSession(row.id);
+      return json(await guestsView());
     }
     const guest = path.match(/^guests\/([^/]+)$/);
     if (guest) {

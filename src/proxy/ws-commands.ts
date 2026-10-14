@@ -20,12 +20,19 @@ export type Obj = Record<string, unknown>;
 export interface TrackedCommand {
   type: string;
   msg: Obj;
+  /** a subscription the proxy answered itself; HA does not know it */
+  local?: boolean;
 }
 
 export interface CommandContext {
   dashboard: Dashboard;
   /** subscriptions established on this connection (id → command) */
   subscriptions: ReadonlyMap<number, TrackedCommand>;
+  /**
+   * The native part of a companion app on a dashboard without widgets: only
+   * the commands in NATIVE_MINIMAL are answered.
+   */
+  minimal?: boolean;
 }
 
 export const DROP: unique symbol = Symbol("drop");
@@ -645,6 +652,50 @@ export const COMMANDS: Record<string, CommandSpec> = {
 
   // manifest/list and manifest/get are not offered: they describe every
   // installed integration, and only admin views of the frontend use them.
+
+  // Companion app (src/companion/). Android's minimal flavour keeps a socket
+  // open for notifications pushed over this channel; guests get none, so it
+  // stays silent. Answered here, HA never sees the app's webhook id.
+  "mobile_app/push_notification_channel": {
+    fields: ["webhook_id", "support_confirm"],
+    subscription: true,
+    validate: (msg) =>
+      typeof msg.webhook_id === "string" && msg.webhook_id.length <= 64 && (msg.support_confirm === undefined || typeof msg.support_confirm === "boolean")
+        ? { kind: "reply", result: null }
+        : reject("invalid push channel request"),
+  },
+  "mobile_app/push_notification_confirm": {
+    fields: ["webhook_id", "confirm_id"],
+    validate: () => ({ kind: "reply", result: null }),
+  },
+};
+
+/**
+ * What the native part of a companion app gets on a dashboard without
+ * widgets: enough to sign in, register and keep its sockets open, with empty
+ * entity data, so its widget and device pickers stay empty. "table" passes
+ * the command on to the normal table; anything not listed is rejected.
+ */
+const NATIVE_MINIMAL: Record<string, "table" | { result: unknown; events?: unknown[] }> = {
+  ping: "table",
+  supported_features: "table",
+  get_config: "table",
+  unsubscribe_events: "table",
+  "auth/current_user": "table",
+  "frontend/get_themes": "table",
+  "frontend/get_icons": "table",
+  "mobile_app/push_notification_channel": "table",
+  "mobile_app/push_notification_confirm": "table",
+  get_states: { result: [] },
+  get_services: { result: {} },
+  get_panels: { result: {} },
+  subscribe_entities: { result: null, events: [{ a: {} }] },
+  subscribe_events: { result: null },
+  "config/entity_registry/list": { result: [] },
+  "config/entity_registry/list_for_display": { result: { entity_categories: {}, entities: [] } },
+  "config/device_registry/list": { result: [] },
+  "config/area_registry/list": { result: [] },
+  "config/floor_registry/list": { result: [] },
 };
 
 // ── evaluation ───────────────────────────────────────────────────────────
@@ -656,6 +707,11 @@ export const COMMANDS: Record<string, CommandSpec> = {
 export function evaluate(msg: Obj, ctx: CommandContext): Verdict {
   const type = msg.type;
   if (typeof type !== "string") return reject("type required");
+  if (ctx.minimal) {
+    const entry = lookup(NATIVE_MINIMAL, type);
+    if (!entry) return reject(`command "${type}" not available without widgets`);
+    if (entry !== "table") return { kind: "reply", result: entry.result, events: entry.events };
+  }
   const spec = commandSpec(type);
   if (!spec) return reject(`command "${type}" not permitted`);
 

@@ -70,6 +70,13 @@ export class Dashboard {
   /** Switched off by the admin: guests are denied, as if the analysis had failed. */
   enabled = true;
 
+  /**
+   * The native part of the companion app (widgets, device controls, watch)
+   * may use the dashboard's entities. Off: it only gets what it needs to stay
+   * signed in (see NATIVE_MINIMAL in proxy/ws-commands.ts).
+   */
+  widgets = false;
+
   constructor(id: string, answers: Readonly<Record<string, string>> = {}) {
     this.id = id;
     this._answers = answers;

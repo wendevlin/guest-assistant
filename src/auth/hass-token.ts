@@ -42,6 +42,7 @@ export function createHassTokenHandler(runtime: Pick<Runtime, "auth" | "dashboar
       sub: session.user.id,
       sid: session.session.id,
       dashboard: dashboard.id,
+      name: session.user.name || undefined,
       iat: now,
       exp: Math.floor(now / 1000) + JWT_TTL_SECONDS,
     });

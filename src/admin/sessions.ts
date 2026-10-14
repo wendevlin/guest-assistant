@@ -1,4 +1,5 @@
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { AttemptLimiter } from "../rate-limit";
 
 export interface AdminSession {
   id: string;
@@ -44,7 +45,7 @@ export class AdminSessions {
   private sessions = new Map<string, AdminSession>();
   private oauth = new Map<string, PendingOAuth>();
   /** Times of the guesses in the last minute, per client address. */
-  private codeAttempts = new Map<string, number[]>();
+  private codeAttempts = new AttemptLimiter(CODE_ATTEMPTS_PER_CLIENT, CODE_ATTEMPTS_TOTAL);
   /** One-time code printed to the log while the proxy is not set up (standalone only). */
   setupCode: string | null = null;
   private setupCodeExpires = 0;
@@ -75,17 +76,7 @@ export class AdminSessions {
   /** Rate-limited (per client address), constant-time check of the setup code. */
   checkSetupCode(input: string, client: string): "ok" | "wrong" | "throttled" {
     const now = Date.now();
-    let total = 0;
-    for (const [address, times] of this.codeAttempts) {
-      const recent = times.filter((t) => now - t < 60_000);
-      if (recent.length) this.codeAttempts.set(address, recent);
-      else this.codeAttempts.delete(address);
-      total += recent.length;
-    }
-    // Only admitted guesses are recorded, so the map holds at most CODE_ATTEMPTS_TOTAL entries.
-    const mine = this.codeAttempts.get(client) ?? [];
-    if (mine.length >= CODE_ATTEMPTS_PER_CLIENT || total >= CODE_ATTEMPTS_TOTAL) return "throttled";
-    this.codeAttempts.set(client, [...mine, now]);
+    if (!this.codeAttempts.take(client)) return "throttled";
     if (!this.setupCode || now >= this.setupCodeExpires) return "wrong";
     const a = Buffer.from(input.replace(/\D/g, ""));
     const b = Buffer.from(this.setupCode.replace(/\D/g, ""));
