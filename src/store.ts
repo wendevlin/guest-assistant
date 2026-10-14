@@ -28,6 +28,8 @@ interface Settings {
   ha: HaSettings;
   /** URL guests use to reach the proxy (secure cookies, links in notifications). */
   public_url: string;
+  /** Name of the guest app when guests install it, instead of the build's own. */
+  app_name: string;
   /** Signs better-auth's session cookies; generated on the first start. */
   auth_secret: string;
 }

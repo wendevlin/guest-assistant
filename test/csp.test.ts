@@ -113,7 +113,7 @@ describe("hash cache", () => {
     const path = join(dir, "index.html");
     try {
       const serve = async () => {
-        const res = await serveFrontendFile(Bun.file(path), "localhost");
+        const res = await serveFrontendFile(Bun.file(path), new Request("http://localhost/"));
         return { body: await res.text(), scripts: directives(res.headers.get("content-security-policy")).get("script-src") };
       };
       // The HTML parser turns CRLF into LF before the browser hashes.

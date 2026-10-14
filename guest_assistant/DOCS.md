@@ -27,6 +27,15 @@ To use another port for guests, change it on the Configuration tab under
   proxy) and set the guest address on the Settings tab.
 - Guests change the language in their settings dialog. The choice stays on
   their device.
+- Guests can add the guest page to their home screen as an app (Android and
+  desktop: "Install app" in the browser menu, which needs the guest port
+  behind HTTPS; iPhone: Share → "Add to Home Screen"). Set the name under the
+  icon on the Settings tab under "App name", before guests install it: an
+  iPhone keeps the name it was added with. On an iPhone, guests sign in once
+  more inside the app.
+- After an update of Guest Assistant, open guest pages and installed apps
+  reload onto the new version on their own. The version is shown in the
+  guests' settings dialog.
 
 ## How it works
 

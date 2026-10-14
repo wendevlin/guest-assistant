@@ -388,6 +388,21 @@ describe("admin decisions on a dashboard", () => {
     expect((await a.call("PUT", "settings", { public_url: "" })).body.public_url).toBeNull();
   });
 
+  test("app name", async () => {
+    await a.call("PUT", "settings", { public_url: "https://guests.example.com" });
+    // Each setting is saved on its own; the other one stays.
+    const saved = await a.call("PUT", "settings", { app_name: "  Seeblick  " });
+    expect(saved.body).toMatchObject({ app_name: "Seeblick", public_url: "https://guests.example.com" });
+    expect((await a.call("PUT", "settings", { app_name: "x".repeat(41) })).status).toBe(400);
+    expect((await a.call("PUT", "settings", { app_name: "Line\nbreak" })).status).toBe(400);
+    expect((await a.call("PUT", "settings", { app_name: 7 })).status).toBe(400);
+    const manifest = await fetch(`${env.url}/manifest.json`);
+    expect(manifest.status).toBe(404); // the test frontend has no manifest
+    const cleared = await a.call("PUT", "settings", { app_name: "" });
+    expect(cleared.body).toMatchObject({ app_name: null, public_url: "https://guests.example.com" });
+    await a.call("PUT", "settings", { public_url: "" });
+  });
+
   test("removing a dashboard removes its guests", async () => {
     expect((await a.call("POST", "guests", { username: "tmp", password: "tmp-pass-12", dashboard: "links-dash" })).status).toBe(201);
     const res = await a.call("DELETE", "dashboards/links-dash");

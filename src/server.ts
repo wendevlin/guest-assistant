@@ -9,6 +9,7 @@ import { serveFrontendFile } from "./csp";
 import { revokeSession, revokeTokens } from "./jwt";
 import { createHttpRoutes } from "./proxy/http";
 import { createWsProxy, type ConnState } from "./proxy/ws";
+import { serveManifest, serveUnregisterWorker } from "./pwa";
 import type { Runtime } from "./runtime";
 
 const RESERVED_PREFIXES = ["/api/", "/static/", "/local/", "/admin/"];
@@ -80,9 +81,14 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
   // anything else under /static.
   const haStatic = httpRoutes["/static/*"].GET;
   const staticHandler = async (req: BunRequest) => {
-    const url = new URL(req.url);
-    const file = await frontendFile(url.pathname);
-    return file ? serveFrontendFile(file, url.host) : haStatic(req);
+    const file = await frontendFile(new URL(req.url).pathname);
+    return file ? serveFrontendFile(file, req, { appName: runtime.appName }) : haStatic(req);
+  };
+
+  const manifestHandler = async () => serveManifest(await frontendFile("/manifest.json"), runtime.appName);
+  const serviceWorkerHandler = async (req: BunRequest) => {
+    const file = await frontendFile("/sw.js");
+    return file ? serveFrontendFile(file, req) : serveUnregisterWorker();
   };
 
   async function serveFrontend(request: Request): Promise<Response> {
@@ -96,7 +102,7 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
 
     let file = await frontendFile(url.pathname);
     if (!file && request.headers.get("accept")?.includes("text/html")) file = await frontendFile("/index.html");
-    return file ? serveFrontendFile(file, url.host) : new Response("Not Found", { status: 404 });
+    return file ? serveFrontendFile(file, request, { appName: runtime.appName }) : new Response("Not Found", { status: 404 });
   }
 
   const adminHandler = (req: BunRequest, server: Server<ConnState>) =>
@@ -120,6 +126,10 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
           ),
       },
       "/api/websocket": (req: BunRequest, server: Server<ConnState>) => wsProxy.upgrade(req, server),
+      // The installable app: its name is set on the admin page, and a build
+      // without a service worker replaces one that an earlier build installed.
+      "/manifest.json": { GET: manifestHandler, HEAD: manifestHandler },
+      "/sw.js": { GET: serviceWorkerHandler, HEAD: serviceWorkerHandler },
       ...httpRoutes,
       "/static/*": { GET: staticHandler, HEAD: staticHandler },
       // Everything under /api that is not listed above is denied.
