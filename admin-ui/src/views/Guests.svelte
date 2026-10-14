@@ -1,5 +1,7 @@
 <script lang="ts">
   import Pencil from "@lucide/svelte/icons/pencil";
+  import Smartphone from "@lucide/svelte/icons/smartphone";
+  import X from "@lucide/svelte/icons/x";
   import Plus from "@lucide/svelte/icons/plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import * as Alert from "$lib/components/ui/alert";
@@ -11,7 +13,7 @@
   import * as Select from "$lib/components/ui/select";
   import { Switch } from "$lib/components/ui/switch";
   import * as Table from "$lib/components/ui/table";
-  import { api, generatePassword, type DashboardView, type Guest } from "$lib/api";
+  import { api, generatePassword, type DashboardView, type Guest, type GuestDevice } from "$lib/api";
   import { message } from "$lib/errors";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
@@ -98,6 +100,18 @@
     }
   }
 
+  /** Signs one device out of the companion app. */
+  async function removeDevice(g: Guest, d: GuestDevice) {
+    error = null;
+    try {
+      guests = await api.removeDevice(g.id, d.id);
+    } catch (err) {
+      error = message(err);
+    }
+  }
+
+  const lastUsed = (iso: string) => new Date(iso).toLocaleString();
+
   async function remove(g: Guest) {
     try {
       await api.deleteGuest(g.id);
@@ -155,7 +169,23 @@
             <Table.Body>
               {#each guests as g (g.id)}
                 <Table.Row class={g.enabled ? "" : "text-muted-foreground"}>
-                  <Table.Cell class="font-medium">{g.username}</Table.Cell>
+                  <Table.Cell class="font-medium">
+                    {g.username}
+                    {#each g.devices ?? [] as d (d.id)}
+                      <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
+                        <Smartphone class="size-3.5 shrink-0" />
+                        <span class="truncate" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="size-6"
+                          aria-label="Sign this device out of the companion app"
+                          title="Sign out of the companion app"
+                          onclick={() => removeDevice(g, d)}><X class="size-3.5" /></Button
+                        >
+                      </div>
+                    {/each}
+                  </Table.Cell>
                   <Table.Cell>{titles.get(g.dashboard) ?? g.dashboard}</Table.Cell>
                   <Table.Cell>
                     <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />

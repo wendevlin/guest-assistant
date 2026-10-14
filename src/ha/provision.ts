@@ -3,7 +3,7 @@ import { HaClient, HaCommandError } from "./client";
 import type { HaEndpoint } from "./endpoint";
 import { passwordLogin, revokeRefreshToken } from "./oauth";
 
-/** Display name of the HA user the proxy creates for itself. */
+/** Display name of the HA user the proxy creates for itself (the beta app: "Guest Assistant Beta"). */
 const PROXY_USER_NAME = "Guest Assistant";
 const USERNAME_BASE = "guest-assistant";
 /** Any client id works for HA's password login as long as the redirect URI shares its host. */
@@ -43,17 +43,21 @@ export async function provisionProxyUser(opts: {
   haUrl: string;
   previousUserId?: string;
   localOnly: boolean;
+  /** Display name of the user; defaults to "Guest Assistant". */
+  userName?: string;
 }): Promise<ProvisionedUser> {
   const { admin, haUrl } = opts;
+  const userName = opts.userName ?? PROXY_USER_NAME;
   const users = (await admin.sendCommand({ type: "config/auth/list" })) as HaUserInfo[];
   const taken = new Set(users.map((u) => u.username).filter(Boolean));
-  let username = USERNAME_BASE;
-  for (let i = 2; taken.has(username); i++) username = `${USERNAME_BASE}-${i}`;
+  const base = userName === PROXY_USER_NAME ? USERNAME_BASE : userName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  let username = base;
+  for (let i = 2; taken.has(username); i++) username = `${base}-${i}`;
   const password = randomBytes(32).toString("base64url");
 
   const created = (await admin.sendCommand({
     type: "config/auth/create",
-    name: PROXY_USER_NAME,
+    name: userName,
     group_ids: ["system-users"],
     local_only: opts.localOnly,
   })) as { user: { id: string } };
@@ -79,7 +83,7 @@ export async function provisionProxyUser(opts: {
     }
 
     const previous = opts.previousUserId ? users.find((u) => u.id === opts.previousUserId) : undefined;
-    if (previous && previous.name === PROXY_USER_NAME && !previous.is_owner && !previous.system_generated) {
+    if (previous && previous.name === userName && !previous.is_owner && !previous.system_generated) {
       await admin.sendCommand({ type: "config/auth/delete", user_id: previous.id }).catch((err) => {
         console.warn(`Could not delete the previous proxy user ${previous.id}:`, err);
       });

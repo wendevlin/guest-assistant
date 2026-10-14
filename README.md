@@ -128,6 +128,8 @@ Assistant with this button:
 
 Or add it by hand: in Home Assistant go to Settings > Apps > App store > ⋮ > Repositories, add
 `https://github.com/wendevlin/guest-assistant` and install "Guest Assistant".
+The repository also offers "Guest Assistant Beta", the next version for
+testing, which installs beside it (see [Beta app](#beta-app)).
 The Supervisor pulls the prebuilt image for your machine (amd64 or aarch64).
 `guest_assistant/DOCS.md` is the documentation shown in Home Assistant.
 
@@ -248,6 +250,60 @@ worker:
 Tabs that were opened before the first frontend with this update check
 keep running the version they loaded until they are reloaded once.
 
+### Guests using the companion app
+
+> Available in Guest Assistant Beta (see [Beta app](#beta-app)); it comes
+> to the stable app with 0.9.0.
+
+The Home Assistant companion apps (iOS and Android) are a web view around
+the frontend plus a native part that talks to a few server endpoints. With
+"Allow the companion app" switched on (Settings tab, **off by default**),
+the proxy answers those endpoints like Home Assistant, for guests instead
+of HA users (`src/companion/`). Guests add the proxy as a server, sign in
+with their guest account and see their dashboard. While it is off, every
+endpoint below answers 404.
+
+| Step | What the apps call | What the proxy does |
+|---|---|---|
+| Sign in | `GET /auth/authorize` (web view), `POST /auth/token` | serves the guest frontend's `authorize.html`, which signs in through `POST /auth/login_flow` (only the official apps' client ids and `homeassistant://auth-callback`; 10 tries a minute per address) and hands the app a one-time code. The code becomes a refresh token (kept as a hash in `ga_app_tokens`, never rotated) and 15-minute access tokens |
+| Register | `POST /api/mobile_app/registrations` | stores device name and app version for the admin, answers a webhook id, no secret, no cloud URLs |
+| Run | `POST /api/webhook/:id` | `get_config` with the app name, HA's version, units and time zone, no location; sensors, locations, events and tags are acknowledged and dropped; templates, cameras, Assist and encryption are refused |
+| Show | `/?external_auth=1`, `WS /api/websocket` | the guest frontend takes its token from the app (`external_auth`) instead of a cookie; the socket is filtered like the guest page's |
+| Sign out | `POST /auth/revoke`, `POST /auth/token` with `action=revoke` | ends the login and its connections |
+
+- App logins are tied to the guest like browser sessions: a new password or
+  deleting the guest ends them, a new dashboard or switching the guest off
+  refuses their current tokens until the next refresh is checked again. The
+  admin sees each guest's phones on the Guests tab and can sign one out.
+  Logins unused for 90 days are removed. Switching companion support off
+  ends all of them.
+- App access tokens are signed with a secret kept in the database (the guest
+  page's tokens use one per process), because the app's native part keeps
+  using a token until it expires; in exchange every use is checked against
+  its login. So a restart of the proxy does not sign the apps out.
+- **Widgets** (Dashboards tab, per dashboard, off by default): the app's
+  native part (widgets, device controls, Android Auto, watch) uses the same
+  filtered WebSocket and HTTP routes, so it only offers the dashboard's
+  entities. Without widgets it gets empty entity data and no service calls.
+  The proxy tells the native part from the web view by the User-Agent the
+  apps send (`Home Assistant/…` alone). That is a feature switch, not a
+  security boundary: a client that lies about it gets at most what the
+  dashboard already allows.
+- **Discovery** ("Show in the app's server list on this network"): the proxy
+  announces itself like HA via mDNS (`_home-assistant._tcp`, under the app
+  name, with its own `uuid`), so the apps list it next to the real Home
+  Assistant. Needs multicast: host networking in Docker. Guest Assistant
+  Beta (the HA app) runs with host networking; its guest port is therefore
+  an option on its Configuration tab, and the Supervisor picks its ingress
+  port.
+- The apps pick features by the reported HA version (the JavaScript bridge,
+  `frontend/loaded`). Keep the pinned guest frontend close to the HA
+  version.
+- Behind HTTPS on a public host name the apps skip their questions about the
+  home network. The invitation link on the Settings tab
+  (`https://my.home-assistant.io/invite/#url=…`) opens the app's setup with
+  the guest address filled in.
+
 ## What to know before exposing it
 
 - The database in `DATA_DIR` holds the proxy's HA token, the guests' password
@@ -326,6 +382,33 @@ after the release cannot reach the image. To ship a newer frontend, run
 files. The hash is whatever GitHub serves at that moment, so pin a release
 you know and commit both files together.
 
+#### Beta app
+
+The repository holds a second app, **Guest Assistant Beta**
+(`guest_assistant_beta/`), for testing on a real Home Assistant before a
+version reaches the stable app. It installs beside the stable app: own slug,
+data, Home Assistant user ("Guest Assistant Beta"), image
+(`ghcr.io/wendevlin/{arch}-guest-assistant-beta`), sidebar entry and icon
+with a "BETA" badge, and guest port 3124 (an option on its Configuration
+tab). Its ingress port is picked by the Supervisor (`ingress_port: 0`).
+
+- Both apps are built from the code on `main`. The stable app only changes
+  when its `version` is raised; until then main is the beta.
+- To publish a beta, raise `version` in `guest_assistant_beta/config.yaml`
+  (`0.9.0-beta.2`), add its entry at the top of
+  `guest_assistant_beta/CHANGELOG.md` and merge to `main`. CI builds the beta
+  image and tags `beta-v0.9.0-beta.2`.
+- The beta's frontend is pinned separately: `scripts/pin-frontend.sh --beta
+  <release>` writes `.github/frontend-release-beta`. A prerelease of the
+  frontend fork, built from a pull request's branch, works there (run its
+  "Guest Assistant frontend" workflow on that branch).
+- To promote, copy what the beta proved (config, docs, changelog entry,
+  frontend pin) to `guest_assistant/` and raise its version.
+- `scripts/build-addon.sh --beta` packages the beta for a local install
+  (`dist/addon/guest_assistant_beta/`); with
+  `GUEST_ASSISTANT_FRONTEND_REF=<branch>` it builds the frontend from that
+  branch of the frontend checkout.
+
 The admin page lives in `admin-ui/`: Svelte 5 with shadcn-svelte components,
 built by Bun alone (`admin-ui/build.ts` with `bun-plugin-svelte` and
 `bun-plugin-tailwind`, no Vite, no SvelteKit). Its output uses relative URLs,
@@ -343,6 +426,8 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 - `GET /api/states`, `/api/states/:entity_id`, `/api/camera_proxy/:entity_id`, `/api/camera_proxy_stream/:entity_id`, `/api/image_proxy/:entity_id`, `/api/media_player_proxy/:entity_id`, `/api/calendars/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`, `/api/tts_proxy/*`, `/api/map_tiles/*`
 - `GET /static/*`, `/local/*` (public, as in HA)
 - `GET /manifest.json` (public, the build's manifest with the app name set on the admin page), `/sw.js` (the build's service worker, or one that removes itself), `/build.json` (id of the frontend build)
+- `GET /api/guest-assistant/session` → `{ name, dashboard_url_path }` (cookie or token; the guest page uses it in the companion app, where it has no cookie)
+- Companion apps, only while switched on: `GET /auth/authorize`, `POST /auth/login_flow`, `POST /auth/token`, `POST /auth/revoke`, `POST /api/mobile_app/registrations`, `POST /api/webhook/:id`
 
 ## License
 

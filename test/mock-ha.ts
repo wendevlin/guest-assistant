@@ -426,7 +426,19 @@ export function startMockHA(port = 0): MockHA {
             deliver(ws, result(id, STATES));
             return;
           case "get_config":
-            deliver(ws, result(id, { latitude: 48.2, longitude: 16.3, location_name: "Secret Base", components: ["light", "conversation"], external_url: "https://x" }));
+            deliver(
+              ws,
+              result(id, {
+                latitude: 48.2,
+                longitude: 16.3,
+                location_name: "Secret Base",
+                components: ["light", "conversation", "cloud", "assist_pipeline"],
+                external_url: "https://x",
+                version: "2026.9.0",
+                time_zone: "Europe/Vienna",
+                unit_system: { length: "km", temperature: "°C", mass: "g", volume: "L", pressure: "Pa", wind_speed: "m/s", accumulated_precipitation: "mm", area: "m²" },
+              }),
+            );
             return;
           case "get_services":
             deliver(ws, result(id, SERVICES));

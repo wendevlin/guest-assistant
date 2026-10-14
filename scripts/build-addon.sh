@@ -14,17 +14,29 @@
 # (.build/frontend), so a running `script/develop*` in the checkout is not
 # disturbed. Uncommitted frontend changes are not included.
 #
-# Usage: scripts/build-addon.sh [--skip-frontend | --frontend DIR]
+# Usage: scripts/build-addon.sh [--beta] [--skip-frontend | --frontend DIR]
+#   --beta           package Guest Assistant Beta (guest_assistant_beta/):
+#                    dist/addon/guest_assistant_beta/, which installs beside
+#                    the stable app
 #   --skip-frontend  reuse the frontend built by the previous run
 #   --frontend DIR   use an already built guest frontend (e.g. the unpacked
 #                    release asset of guest-assistant-frontend, as in CI)
+#
+# GUEST_ASSISTANT_FRONTEND_REF picks another branch or commit of the frontend
+# checkout than `guest-assistant`, e.g. a pull request's branch for a beta.
 
 set -e
 
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 
-OUT="$ROOT/dist/addon/guest_assistant"
+APP=guest_assistant
+if [ "$1" = "--beta" ]; then
+  APP=guest_assistant_beta
+  shift
+fi
+OUT="$ROOT/dist/addon/$APP"
+FRONTEND_REF=${GUEST_ASSISTANT_FRONTEND_REF:-guest-assistant}
 
 if [ "$1" = "--frontend" ]; then
   FRONTEND_DIST=$(cd "${2:?--frontend needs a directory}" && pwd)
@@ -38,9 +50,9 @@ else
 
   if [ "$1" != "--skip-frontend" ]; then
     if [ ! -d "$WORKTREE" ]; then
-      git -C "$FRONTEND_REPO" worktree add --detach "$WORKTREE" guest-assistant
+      git -C "$FRONTEND_REPO" worktree add --detach "$WORKTREE" "$FRONTEND_REF"
     else
-      git -C "$WORKTREE" checkout --detach guest-assistant
+      git -C "$WORKTREE" checkout --detach "$FRONTEND_REF"
     fi
     # Share the checkout's dependencies instead of installing them a second time.
     [ -e "$WORKTREE/node_modules" ] || ln -s "$FRONTEND_REPO/node_modules" "$WORKTREE/node_modules"
@@ -55,8 +67,11 @@ bun run build:admin
 rm -rf "$OUT"
 mkdir -p "$OUT/app/admin-ui"
 # Without `image` the Supervisor builds the Dockerfile instead of pulling the release image.
-grep -v '^image:' guest_assistant/config.yaml > "$OUT/config.yaml"
-cp guest_assistant/Dockerfile guest_assistant/entrypoint.sh guest_assistant/README.md guest_assistant/DOCS.md guest_assistant/CHANGELOG.md guest_assistant/icon.png guest_assistant/logo.png "$OUT/"
+grep -v '^image:' "$APP/config.yaml" > "$OUT/config.yaml"
+# Both apps run the same image recipe; texts, icons and option labels are their own.
+cp guest_assistant/Dockerfile guest_assistant/entrypoint.sh "$OUT/"
+cp "$APP/README.md" "$APP/DOCS.md" "$APP/CHANGELOG.md" "$APP/icon.png" "$APP/logo.png" "$OUT/"
+[ -d "$APP/translations" ] && cp -r "$APP/translations" "$OUT/"
 cp -r package.json bun.lock tsconfig.json src "$OUT/app/"
 cp admin-ui/package.json "$OUT/app/admin-ui/"
 cp -r admin-ui/dist "$OUT/app/admin-ui/dist"
@@ -73,4 +88,4 @@ else
 fi
 rm -rf "$OUT/app"
 
-echo "Packaged $(sed -n 's/^version: *//p' guest_assistant/config.yaml | tr -d '"') in $OUT ($(du -sh "$OUT" | cut -f1))"
+echo "Packaged $APP $(sed -n 's/^version: *//p' "$APP/config.yaml" | tr -d '"') in $OUT ($(du -sh "$OUT" | cut -f1))"

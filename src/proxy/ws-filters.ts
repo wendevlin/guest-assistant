@@ -184,12 +184,30 @@ export function filterPanels(result: unknown, dashboardId: string): unknown {
   return panel === undefined ? {} : { [dashboardId]: panel };
 }
 
-/** get_config: strip location, URLs and the Assist entry point. */
+/** Reported to guests while HA's own version is not known yet. */
+export const FALLBACK_HA_VERSION = "2026.9.0";
+
+/**
+ * Integrations guests must not be offered: Assist (conversation,
+ * assist_pipeline), and in the companion app also Thread and Matter
+ * commissioning and Home Assistant Cloud's remote access.
+ */
+const HIDDEN_COMPONENTS = new Set(["conversation", "assist_pipeline", "thread", "matter", "cloud"]);
+/** The companion apps registered with these, so they must look loaded to them. */
+const COMPANION_COMPONENTS = ["mobile_app", "webhook"];
+
+export function scrubComponents(components: unknown, { companion = false } = {}): string[] {
+  const list = Array.isArray(components) ? components.filter((c): c is string => typeof c === "string") : [];
+  const visible = list.filter((c) => !HIDDEN_COMPONENTS.has(c));
+  return companion ? [...new Set([...visible, ...COMPANION_COMPONENTS])] : visible;
+}
+
+/** get_config: strip location, URLs and the integrations in HIDDEN_COMPONENTS. */
 export function scrubConfig(result: unknown): unknown {
   if (!isObj(result)) return result;
   const copy: Obj = { ...result };
   if (Array.isArray(copy.components)) {
-    copy.components = copy.components.filter((c) => c !== "conversation");
+    copy.components = scrubComponents(copy.components);
   }
   copy.latitude = 0;
   copy.longitude = 0;

@@ -19,6 +19,30 @@ export interface TestEnv {
   login(username: string, password: string): Promise<string>;
   /** Fetches a hass-token JWT for the given cookie. */
   hassToken(cookie: string): Promise<{ status: number; body: Record<string, unknown> }>;
+  /** Signs in like a companion app (login flow + code exchange); needs companion support switched on. */
+  appLogin(username: string, password: string, clientId?: string): Promise<AppTokensResponse>;
+}
+
+export interface AppTokensResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
+export const ANDROID = "https://home-assistant.io/android";
+export const IOS = "https://home-assistant.io/iOS";
+export const CALLBACK = "homeassistant://auth-callback";
+/** User-Agent of the companion app's native part (its web view sends a browser one). */
+export const NATIVE_UA = "Home Assistant/2026.10.1 (Android 16; Pixel 9)";
+
+/** POSTs a form like the companion apps do. */
+export function postForm(url: string, fields: Record<string, string>, headers: Record<string, string> = {}): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+    body: new URLSearchParams(fields).toString(),
+  });
 }
 
 const USERS = [
@@ -33,6 +57,7 @@ export function testEnvConfig(port: number): Env {
     frontendRepo: "./test/fixtures/frontend-repo",
     ingressPort: port + 1,
     adminUiDir: "./test/fixtures/admin-ui",
+    flavor: "stable",
   };
 }
 
@@ -60,9 +85,9 @@ export async function startTestEnv({ configured = true, mode = "standalone" as M
 
   if (configured) {
     store.set("ha", { url: ha.url, token: ha.endpoint.token });
-    store.saveDashboard({ id: "guest-dash", answers: {}, enabled: true });
-    store.saveDashboard({ id: "bad-dash", answers: {}, enabled: true });
-    store.saveDashboard({ id: "strategy-dash", answers: {}, enabled: true });
+    store.saveDashboard({ id: "guest-dash", answers: {}, enabled: true, widgets: false });
+    store.saveDashboard({ id: "bad-dash", answers: {}, enabled: true, widgets: false });
+    store.saveDashboard({ id: "strategy-dash", answers: {}, enabled: true, widgets: false });
     for (const u of USERS) await runtime.guests.create(u);
     await runtime.connect();
   }
@@ -97,6 +122,18 @@ export async function startTestEnv({ configured = true, mode = "standalone" as M
       const res = await fetch(`${url}/api/auth/hass-token`, { headers: { cookie } });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     },
+    async appLogin(username, password, clientId = ANDROID) {
+      const flow = await fetch(`${url}/auth/login_flow`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, redirect_uri: CALLBACK, username, password }),
+      });
+      const step = (await flow.json()) as { type: string; result?: string };
+      if (step.type !== "create_entry" || !step.result) throw new Error(`app login failed: ${flow.status} ${JSON.stringify(step)}`);
+      const res = await postForm(`${url}/auth/token`, { grant_type: "authorization_code", code: step.result, client_id: clientId });
+      if (!res.ok) throw new Error(`code exchange failed: ${res.status} ${await res.text()}`);
+      return (await res.json()) as AppTokensResponse;
+    },
   };
 }
 
@@ -109,8 +146,9 @@ export class GuestWs {
   readonly received: Record<string, unknown>[] = [];
   private opened: Promise<Record<string, unknown>>;
 
-  constructor(url: string) {
-    this.ws = new WebSocket(url);
+  constructor(url: string, headers?: Record<string, string>) {
+    // Bun's WebSocket takes request headers (e.g. a companion app's User-Agent).
+    this.ws = headers ? new WebSocket(url, { headers } as unknown as string[]) : new WebSocket(url);
     this.opened = new Promise((resolve) => {
       const first = (ev: MessageEvent) => {
         this.ws.removeEventListener("message", first);

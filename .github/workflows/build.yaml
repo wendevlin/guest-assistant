@@ -1,16 +1,26 @@
 name: Build
 
-# Tests every push and pull request. Releases the app when main carries a
-# `version` in guest_assistant/config.yaml that has no tag vX.Y.Z yet: builds
-# the images, pushes them to ghcr.io/wendevlin/{arch}-guest-assistant:X.Y.Z and
-# then creates the tag. The Supervisor offers the update as soon as the
-# version is on main, so the images must follow without a manual step.
-# Pushing a tag vX.Y.Z by hand releases as well.
+# Tests every push and pull request. The repository holds two apps, released
+# the same way from main:
+#
+# | App                  | Folder               | Image                                    | Tag             |
+# |----------------------|----------------------|------------------------------------------|-----------------|
+# | Guest Assistant      | guest_assistant      | ghcr.io/wendevlin/{arch}-guest-assistant      | vX.Y.Z          |
+# | Guest Assistant Beta | guest_assistant_beta | ghcr.io/wendevlin/{arch}-guest-assistant-beta | beta-vX.Y.Z-beta.N |
+#
+# When main carries a `version` in an app's config.yaml that has no tag yet,
+# this builds that app's images, pushes them and then creates the tag. The
+# Supervisor offers the update as soon as the version is on main, so the
+# images must follow without a manual step. Pushing such a tag by hand
+# releases as well.
+#
+# Both images are built from the same code; main is where the beta is
+# tested. The stable app only changes when its version is raised.
 #
 # The guest frontend is not built here: it comes from the release of
-# wendevlin/guest-assistant-frontend named in .github/frontend-release, and is
-# only used if its SHA-256 matches .github/frontend-release.sha256
-# (scripts/pin-frontend.sh writes both).
+# wendevlin/guest-assistant-frontend named in .github/frontend-release (the
+# beta: .github/frontend-release-beta), and is only used if its SHA-256
+# matches the .sha256 file next to it (scripts/pin-frontend.sh writes both).
 #
 # Actions are pinned to commit SHAs; the comment names the tag.
 
@@ -20,6 +30,7 @@ on:
       - main
     tags:
       - "v*"
+      - "beta-v*"
   pull_request:
   workflow_dispatch:
 
@@ -45,8 +56,10 @@ jobs:
     name: Release check
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.check.outputs.version }}
-      publish: ${{ steps.check.outputs.publish }}
+      stable_version: ${{ steps.check.outputs.stable_version }}
+      stable_publish: ${{ steps.check.outputs.stable_publish }}
+      beta_version: ${{ steps.check.outputs.beta_version }}
+      beta_publish: ${{ steps.check.outputs.beta_publish }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -59,41 +72,64 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' guest_assistant/config.yaml)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [ "$REF_TYPE" = tag ]; then
-            if [ "$REF_NAME" != "v$version" ]; then
-              echo "Tag $REF_NAME does not match version $version in guest_assistant/config.yaml" >&2
-              exit 1
+          # check <channel> <folder> <tag prefix>
+          check() {
+            version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$2/config.yaml")
+            echo "$1_version=$version" >> "$GITHUB_OUTPUT"
+            tag="$3$version"
+            if [ "$REF_TYPE" = tag ]; then
+              # A pushed tag releases the app it names, and only that one.
+              case $REF_NAME in
+                "$tag") echo "$1_publish=true" >> "$GITHUB_OUTPUT" ;;
+                "$3"[0-9]*)
+                  echo "Tag $REF_NAME does not match version $version in $2/config.yaml" >&2
+                  exit 1
+                  ;;
+                *) echo "$1_publish=false" >> "$GITHUB_OUTPUT" ;;
+              esac
+            elif [ "$EVENT" != pull_request ] && [ "$REF" = refs/heads/main ]; then
+              # Exit code 2: no such tag. Anything else but 0 is an error, not a release.
+              code=0
+              git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || code=$?
+              case $code in
+                0) echo "$1_publish=false" >> "$GITHUB_OUTPUT" ;;
+                2)
+                  echo "$2 $version on main has no tag $tag yet: releasing it"
+                  echo "$1_publish=true" >> "$GITHUB_OUTPUT"
+                  ;;
+                *) exit "$code" ;;
+              esac
+            else
+              echo "$1_publish=false" >> "$GITHUB_OUTPUT"
             fi
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          elif [ "$EVENT" != pull_request ] && [ "$REF" = refs/heads/main ]; then
-            # Exit code 2: no such tag. Anything else but 0 is an error, not a release.
-            code=0
-            git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || code=$?
-            case $code in
-              0) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
-              2)
-                echo "Version $version on main has no tag yet: releasing it"
-                echo "publish=true" >> "$GITHUB_OUTPUT"
-                ;;
-              *) exit "$code" ;;
-            esac
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          fi
+          }
+          check stable guest_assistant v
+          check beta guest_assistant_beta beta-v
 
   image:
-    name: Image (${{ matrix.arch }})
+    name: Image (${{ matrix.channel }}, ${{ matrix.arch }})
     needs: [test, release]
     strategy:
       matrix:
+        arch: [amd64, aarch64]
+        channel: [stable, beta]
         include:
           - arch: amd64
             runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
+          - channel: stable
+            app: guest_assistant
+            image: guest-assistant
+            pin: .github/frontend-release
+          - channel: beta
+            app: guest_assistant_beta
+            image: guest-assistant-beta
+            pin: .github/frontend-release-beta
     runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ matrix.channel == 'beta' && needs.release.outputs.beta_version || needs.release.outputs.stable_version }}
+      PUBLISH: ${{ matrix.channel == 'beta' && needs.release.outputs.beta_publish || needs.release.outputs.stable_publish }}
     permissions:
       contents: read
       packages: write
@@ -107,56 +143,75 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Download the guest frontend
+        env:
+          PIN: ${{ matrix.pin }}
         run: |
-          release=$(cat .github/frontend-release)
+          release=$(cat "$PIN")
           mkdir -p .build/frontend-dist
           curl -fsSL -o .build/guest-assistant-frontend.tar.gz \
             "https://github.com/wendevlin/guest-assistant-frontend/releases/download/${release}/guest-assistant-frontend.tar.gz"
           # A release asset can be replaced after it was published: unpack it
           # only if it is the one that was pinned.
-          (cd .build && sha256sum --strict -c ../.github/frontend-release.sha256)
+          (cd .build && sha256sum --strict -c "../$PIN.sha256")
           tar -xzf .build/guest-assistant-frontend.tar.gz -C .build/frontend-dist
 
       - name: Package
-        run: scripts/build-addon.sh --frontend .build/frontend-dist
+        env:
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          if [ "$CHANNEL" = beta ]; then
+            scripts/build-addon.sh --beta --frontend .build/frontend-dist
+          else
+            scripts/build-addon.sh --frontend .build/frontend-dist
+          fi
 
       - name: Build
         env:
           ARCH: ${{ matrix.arch }}
-          VERSION: ${{ needs.release.outputs.version }}
+          APP: ${{ matrix.app }}
+          IMAGE: ${{ matrix.image }}
         run: |
-          docker build dist/addon/guest_assistant \
+          docker build "dist/addon/$APP" \
             --build-arg BUILD_ARCH="$ARCH" \
             --build-arg BUILD_VERSION="$VERSION" \
-            --tag "ghcr.io/wendevlin/${ARCH}-guest-assistant:${VERSION}" \
-            --tag "ghcr.io/wendevlin/${ARCH}-guest-assistant:latest"
+            --tag "ghcr.io/wendevlin/${ARCH}-${IMAGE}:${VERSION}" \
+            --tag "ghcr.io/wendevlin/${ARCH}-${IMAGE}:latest"
 
       - name: Push
-        if: needs.release.outputs.publish == 'true'
+        if: env.PUBLISH == 'true'
         env:
           ARCH: ${{ matrix.arch }}
-          VERSION: ${{ needs.release.outputs.version }}
+          IMAGE: ${{ matrix.image }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
-          docker push "ghcr.io/wendevlin/${ARCH}-guest-assistant:${VERSION}"
-          docker push "ghcr.io/wendevlin/${ARCH}-guest-assistant:latest"
+          docker push "ghcr.io/wendevlin/${ARCH}-${IMAGE}:${VERSION}"
+          docker push "ghcr.io/wendevlin/${ARCH}-${IMAGE}:latest"
 
   tag:
     name: Tag release
     needs: [release, image]
     # Only after both images are pushed; a tag pushed with GITHUB_TOKEN does
     # not start another run.
-    if: needs.release.outputs.publish == 'true' && github.ref_type != 'tag'
+    if: (needs.release.outputs.stable_publish == 'true' || needs.release.outputs.beta_publish == 'true') && github.ref_type != 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: Create tag
+      - name: Create tags
         env:
-          VERSION: ${{ needs.release.outputs.version }}
+          STABLE_PUBLISH: ${{ needs.release.outputs.stable_publish }}
+          STABLE_VERSION: ${{ needs.release.outputs.stable_version }}
+          BETA_PUBLISH: ${{ needs.release.outputs.beta_publish }}
+          BETA_VERSION: ${{ needs.release.outputs.beta_version }}
         run: |
-          git tag "v$VERSION" "$GITHUB_SHA"
-          git push origin "v$VERSION"
+          if [ "$STABLE_PUBLISH" = true ]; then
+            git tag "v$STABLE_VERSION" "$GITHUB_SHA"
+            git push origin "v$STABLE_VERSION"
+          fi
+          if [ "$BETA_PUBLISH" = true ]; then
+            git tag "beta-v$BETA_VERSION" "$GITHUB_SHA"
+            git push origin "beta-v$BETA_VERSION"
+          fi

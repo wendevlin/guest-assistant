@@ -9,6 +9,24 @@ export interface StateView {
   ha: { url: string; state: "unconfigured" | "connecting" | "connected" | "error"; error: string | null; version: string | null; configured_by: string | null } | null;
   public_url: string | null;
   app_name: string | null;
+  companion: CompanionView | null;
+  /** "beta" for Guest Assistant Beta. */
+  flavor: "stable" | "beta";
+  /** Port guests open. */
+  guest_port: number;
+  /** Problems found while starting, such as a port in use (admins only). */
+  problems: string[];
+}
+
+export interface CompanionView {
+  /** The Home Assistant companion apps can sign in guests. */
+  enabled: boolean;
+  /** Guest Assistant announces itself on the local network. */
+  discoverable: boolean;
+  /** Whether the announcement runs; "unavailable" without multicast or a LAN address. */
+  discovery: "off" | "active" | "unavailable";
+  /** Why discovery does not work, when it does not. */
+  discovery_error: string | null;
 }
 
 export interface QuestionView {
@@ -28,6 +46,8 @@ export interface DashboardView {
   status: "loading" | "ok" | "rejected";
   /** Switched on by the admin; inactive dashboards deny their guests. */
   enabled: boolean;
+  /** The companion app's widgets and device controls may use the dashboard's entities. */
+  widgets: boolean;
   /** Why guests cannot use the dashboard at all (only when rejected). */
   violations: Array<{ rule: string; path: string; message: string }>;
   /** Parts guests do not get: hidden, or an action that does nothing. */
@@ -50,6 +70,17 @@ export interface Guest {
   username: string;
   dashboard: string;
   enabled: boolean;
+  /** Companion app logins of the guest. */
+  devices?: GuestDevice[];
+}
+
+export interface GuestDevice {
+  id: string;
+  /** Device name the app registered with; null until it registered. */
+  name: string | null;
+  app: string | null;
+  created_at: string;
+  last_used_at: string;
 }
 
 export interface DiscoveredHa {
@@ -98,7 +129,7 @@ export const api = {
   dashboards: () => request<DashboardsView>("GET", "dashboards"),
   preview: (id: string) => request<DashboardView>("GET", `dashboards/preview/${enc(id)}`),
   addDashboard: (id: string, answers: Record<string, string>) => request<DashboardsView>("POST", "dashboards", { id, answers }),
-  updateDashboard: (id: string, changes: { answers?: Record<string, string>; enabled?: boolean }) =>
+  updateDashboard: (id: string, changes: { answers?: Record<string, string>; enabled?: boolean; widgets?: boolean }) =>
     request<DashboardsView>("PATCH", `dashboards/${enc(id)}`, changes),
   removeDashboard: (id: string) => request<DashboardsView>("DELETE", `dashboards/${enc(id)}`),
   guests: () => request<Guest[]>("GET", "guests"),
@@ -107,7 +138,9 @@ export const api = {
   updateGuest: (id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }) =>
     request<Guest>("PATCH", `guests/${enc(id)}`, changes),
   deleteGuest: (id: string) => request<{ ok: true }>("DELETE", `guests/${enc(id)}`),
-  saveSettings: (settings: { public_url?: string; app_name?: string }) => request<StateView>("PUT", "settings", settings),
+  removeDevice: (guestId: string, deviceId: string) => request<Guest[]>("DELETE", `guests/${enc(guestId)}/devices/${enc(deviceId)}`),
+  saveSettings: (settings: { public_url?: string; app_name?: string; companion?: { enabled?: boolean; discoverable?: boolean } }) =>
+    request<StateView>("PUT", "settings", settings),
 };
 
 /** A readable random password for guests. */

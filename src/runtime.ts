@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { createAuth, type Auth } from "./auth";
+import { AppTokens } from "./companion/tokens";
 import { migrate } from "./auth/migrate";
 import { Dashboard } from "./dashboard";
-import type { Env } from "./env";
+import type { Env, Flavor } from "./env";
 import { Guests } from "./guests";
 import { HaClient, HaCommandError } from "./ha/client";
 import type { HaEndpoint } from "./ha/endpoint";
-import type { HaSettings, Store } from "./store";
+import type { CompanionSettings, HaSettings, Store } from "./store";
 
 export type ConnectionState = "unconfigured" | "connecting" | "connected" | "error";
 export type Mode = "standalone" | "app";
@@ -22,7 +23,19 @@ interface Listeners {
   dashboardRemoved: Array<(id: string) => void>;
   guestChanged: Array<(guestId: string) => void>;
   connectionChanged: Array<() => void>;
+  /** Companion app logins that ended (revoked, removed, support switched off). */
+  appSessionsEnded: Array<(ids: string[]) => void>;
+  /** The admin switched widgets for a dashboard on or off. */
+  widgetsChanged: Array<(d: Dashboard) => void>;
+  /** Companion settings, app name or public URL changed (the mDNS announcement follows them). */
+  settingsChanged: Array<() => void>;
 }
+
+/** Discovery on the local network (companion/announce.ts). */
+export type DiscoveryStatus = "off" | "active" | "unavailable";
+
+/** How long the core config read from HA is reused for companion apps. */
+const HA_CONFIG_TTL_MS = 5 * 60_000;
 
 const RETRY_MS = 30_000;
 
@@ -43,9 +56,33 @@ export class Runtime {
   haVersion?: string;
   /** As an app: path of the ingress panel, used in HA notifications. */
   appPanelPath?: string;
+  readonly appTokens: AppTokens;
+  discoveryStatus: DiscoveryStatus = "off";
+  /** Why discovery is not possible, for the admin page. */
+  discoveryError?: string;
+  /** As an app: whether the Supervisor runs it with host networking (needed for discovery). */
+  hostNetwork?: boolean;
+  /** The guest port could not be opened; guests cannot connect. */
+  guestPortOpen = true;
+  /**
+   * Problems found while starting (e.g. a port in use), shown on the admin
+   * page and, as an app, in a notification in Home Assistant.
+   */
+  readonly startupProblems: string[] = [];
+  private startupNotified = false;
 
   private _auth: Auth;
-  private listeners: Listeners = { dashboardChanged: [], dashboardRemoved: [], guestChanged: [], connectionChanged: [] };
+  private listeners: Listeners = {
+    dashboardChanged: [],
+    dashboardRemoved: [],
+    guestChanged: [],
+    connectionChanged: [],
+    appSessionsEnded: [],
+    widgetsChanged: [],
+    settingsChanged: [],
+  };
+  private haConfigCache?: { at: number; config: Record<string, unknown> };
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** dashboard id → what the admin was last notified about (see notifyAdmin) */
   private notified = new Map<string, string>();
@@ -58,6 +95,7 @@ export class Runtime {
   ) {
     this._auth = this.buildAuth();
     this.guests = new Guests(() => this._auth);
+    this.appTokens = new AppTokens(store, () => this.companion.enabled);
   }
 
   get auth(): Auth {
@@ -82,6 +120,42 @@ export class Runtime {
     return this.store.get("app_name");
   }
 
+  /** "Guest Assistant", or "Guest Assistant Beta" for the beta app, so both can be told apart. */
+  get productName(): string {
+    return this.env.flavor === "beta" ? "Guest Assistant Beta" : "Guest Assistant";
+  }
+
+  /** Records a start-up problem for the admin page and Home Assistant's notifications. */
+  reportStartupProblem(message: string): void {
+    console.error(message);
+    this.startupProblems.push(message);
+    if (this.client) void this.notifyStartupProblems();
+  }
+
+  private async notifyStartupProblems(): Promise<void> {
+    if (this.startupNotified || this.startupProblems.length === 0) return;
+    this.startupNotified = true;
+    await this.callService("persistent_notification", "create", {
+      notification_id: notificationId("_startup", this.env.flavor),
+      title: `${this.productName} has a problem`,
+      message: this.startupProblems.join("\n\n"),
+    });
+  }
+
+  get companion(): CompanionSettings {
+    return this.store.get("companion") ?? { enabled: false, discoverable: false };
+  }
+
+  /** Stable id of this instance for the companion apps; generated once. */
+  get instanceId(): string {
+    let id = this.store.get("instance_id");
+    if (!id) {
+      id = randomBytes(16).toString("hex");
+      this.store.set("instance_id", id);
+    }
+    return id;
+  }
+
   private buildAuth(): Auth {
     // Without an own secret better-auth would sign cookies with its
     // well-known default.
@@ -95,17 +169,71 @@ export class Runtime {
 
   async init(): Promise<void> {
     await migrate(this._auth);
+    this.pruneAppTokens();
+    this.pruneTimer = setInterval(() => this.pruneAppTokens(), 86_400_000);
+    this.pruneTimer.unref();
   }
 
   async setPublicUrl(url: string | undefined): Promise<void> {
     if (url) this.store.set("public_url", new URL(url).origin);
     else this.store.delete("public_url");
     this._auth = this.buildAuth();
+    this.emit("settingsChanged");
   }
 
   setAppName(name: string | undefined): void {
     if (name) this.store.set("app_name", name);
     else this.store.delete("app_name");
+    this.emit("settingsChanged");
+  }
+
+  /**
+   * Switches companion app support. Switching it off ends every app login:
+   * the proxy stops posing as Home Assistant, and the apps have to be set up
+   * again if it is switched back on.
+   */
+  setCompanion(changes: Partial<CompanionSettings>): void {
+    const next = { ...this.companion, ...changes };
+    this.store.set("companion", next);
+    if (!next.enabled) this.endAppSessions(this.appTokens.deleteAll());
+    this.emit("settingsChanged");
+  }
+
+  /** Ends one companion app login (the app revoked it or the admin removed the device). */
+  endAppSession(id: string): boolean {
+    const deleted = this.appTokens.delete(id);
+    if (deleted) this.endAppSessions([id]);
+    return deleted;
+  }
+
+  private endAppSessions(ids: string[]): void {
+    if (ids.length > 0) this.emit("appSessionsEnded", ids);
+  }
+
+  private pruneAppTokens(): void {
+    const ids = this.appTokens.prune();
+    if (ids.length > 0) console.log(`Removed ${ids.length} companion app login(s) unused for a long time.`);
+    this.endAppSessions(ids);
+  }
+
+  /**
+   * HA's core config for companion apps (units, time zone, components).
+   * Cached for a few minutes and kept in the database, so the apps get an
+   * answer while HA restarts; null before it was ever read.
+   */
+  async haConfig(): Promise<Record<string, unknown> | null> {
+    if (this.haConfigCache && Date.now() - this.haConfigCache.at < HA_CONFIG_TTL_MS) return this.haConfigCache.config;
+    if (this.client) {
+      try {
+        const config = (await this.client.sendCommand({ type: "get_config" })) as Record<string, unknown>;
+        this.haConfigCache = { at: Date.now(), config };
+        this.store.set("last_ha_config", config);
+        return config;
+      } catch (err) {
+        console.warn("Could not read the core config from Home Assistant:", err instanceof Error ? err.message : err);
+      }
+    }
+    return this.store.get("last_ha_config") ?? null;
   }
 
   on<K extends keyof Listeners>(event: K, listener: Listeners[K][number]): void {
@@ -166,6 +294,7 @@ export class Runtime {
       await this.loadDashboards();
       this.state = "connected";
       console.log(`Serving ${this.dashboards.size} guest dashboard(s).`);
+      void this.notifyStartupProblems();
     } catch (err) {
       client.close();
       if (generation !== this.generation) return;
@@ -227,6 +356,7 @@ export class Runtime {
     for (const record of records) {
       const dashboard = this.dashboards.get(record.id) ?? this.track(new Dashboard(record.id, record.answers));
       dashboard.enabled = record.enabled;
+      dashboard.widgets = record.widgets;
       await this.loadDashboard(dashboard);
     }
   }
@@ -286,13 +416,13 @@ export class Runtime {
     if (probe.status === "rejected") {
       throw new RuntimeError(`Dashboard "${id}" cannot be used by guests: ${probe.violations.map((v) => v.message).join("; ")}`);
     }
-    this.store.saveDashboard({ id, answers, enabled: true });
+    this.store.saveDashboard({ id, answers, enabled: true, widgets: false });
     const dashboard = this.track(new Dashboard(id, answers));
     await this.loadDashboard(dashboard);
     return dashboard;
   }
 
-  async updateDashboard(id: string, changes: { answers?: Record<string, string>; enabled?: boolean }): Promise<void> {
+  async updateDashboard(id: string, changes: { answers?: Record<string, string>; enabled?: boolean; widgets?: boolean }): Promise<void> {
     const record = this.store.getDashboard(id);
     const dashboard = this.dashboards.get(id);
     if (!record || !dashboard) throw new RuntimeError(`Dashboard "${id}" is not a guest dashboard`);
@@ -301,6 +431,11 @@ export class Runtime {
       dashboard.enabled = changes.enabled;
       // Switching off drops open guest connections (see WsProxy.dashboardChanged).
       this.emit("dashboardChanged", dashboard);
+    }
+    if (changes.widgets !== undefined && changes.widgets !== dashboard.widgets) {
+      dashboard.widgets = changes.widgets;
+      // Native app connections reconnect into the new set of commands.
+      this.emit("widgetsChanged", dashboard);
     }
     if (changes.answers) dashboard.setAnswers(changes.answers);
   }
@@ -327,13 +462,23 @@ export class Runtime {
     if (changes.dashboard !== undefined && !this.store.getDashboard(changes.dashboard)) {
       throw new RuntimeError(`Dashboard "${changes.dashboard}" is not a guest dashboard`);
     }
+    const before = await this.guests.get(id);
     const guest = await this.guests.update(id, changes);
+    // Like the guest's browser sessions: a new password ends the app logins.
+    // A new dashboard or switching the guest off only refuses their current
+    // tokens; the next refresh is checked again (and binds the new dashboard).
+    if (changes.password !== undefined) {
+      this.endAppSessions(this.appTokens.deleteForUser(id));
+    } else if (before && (guest.dashboard !== before.dashboard || guest.enabled !== before.enabled)) {
+      this.appTokens.bumpGeneration(id);
+    }
     this.emit("guestChanged", id);
     return guest;
   }
 
   async deleteGuest(id: string): Promise<void> {
     await this.guests.delete(id);
+    this.endAppSessions(this.appTokens.deleteForUser(id));
     this.emit("guestChanged", id);
   }
 
@@ -361,7 +506,7 @@ export class Runtime {
       return;
     }
     const target = this.appPanelPath ?? (this.publicUrl ? `${this.publicUrl}/admin/` : undefined);
-    const link = target ? `\n\n[Open Guest Assistant](${target})` : "";
+    const link = target ? `\n\n[Open ${this.productName}](${target})` : "";
     const parts: string[] = [];
     if (dashboard.status === "rejected") {
       parts.push(`Guests cannot use the guest dashboard **${dashboard.id}**: ${dashboard.violations.map((v) => v.message).join("; ")}.`);
@@ -377,14 +522,14 @@ export class Runtime {
       );
     }
     await this.callService("persistent_notification", "create", {
-      notification_id: notificationId(dashboard.id),
-      title: "Guest Assistant needs your attention",
-      message: `${parts.join("\n\n")}\n\nDetails are on the Guest Assistant admin page.${link}`,
+      notification_id: notificationId(dashboard.id, this.env.flavor),
+      title: `${this.productName} needs your attention`,
+      message: `${parts.join("\n\n")}\n\nDetails are on the ${this.productName} admin page.${link}`,
     });
   }
 
   private async dismissNotification(id: string): Promise<void> {
-    await this.callService("persistent_notification", "dismiss", { notification_id: notificationId(id) });
+    await this.callService("persistent_notification", "dismiss", { notification_id: notificationId(id, this.env.flavor) });
   }
 
   private async callService(domain: string, service: string, data: Record<string, unknown>): Promise<void> {
@@ -403,6 +548,7 @@ export class Runtime {
 
   close(): void {
     this.generation++;
+    if (this.pruneTimer) clearInterval(this.pruneTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.client?.close();
     this.client = null;
@@ -411,6 +557,7 @@ export class Runtime {
 
 export class RuntimeError extends Error {}
 
-function notificationId(dashboardId: string): string {
-  return `guest_assistant_${dashboardId.replace(/[^a-z0-9_]/gi, "_")}`;
+/** Beta and stable can run on the same Home Assistant; their notifications must not replace each other's. */
+function notificationId(dashboardId: string, flavor: Flavor): string {
+  return `guest_assistant_${flavor === "beta" ? "beta_" : ""}${dashboardId.replace(/[^a-z0-9_]/gi, "_")}`;
 }

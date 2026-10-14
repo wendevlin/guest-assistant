@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+/** "beta" for the Guest Assistant Beta app, which runs beside the stable one. */
+export type Flavor = "stable" | "beta";
 
 /**
  * Start-up settings that cannot live in the database because they are needed
@@ -22,6 +26,8 @@ export interface Env {
   ingressPort: number;
   /** Built admin page (`bun run build:admin`). */
   adminUiDir: string;
+  /** Stable or beta app; decides default names so both can run side by side. */
+  flavor: Flavor;
 }
 
 function intVar(name: string, fallback: number): number {
@@ -32,14 +38,35 @@ function intVar(name: string, fallback: number): number {
   return n;
 }
 
+/**
+ * The app's options from its Configuration tab, which the Supervisor writes
+ * to options.json in the data directory. Only `port` exists: with host
+ * networking the guest port cannot be remapped under "Network", so it is an
+ * option instead.
+ */
+export function readAppOptions(dataDir: string): { port?: number } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(join(dataDir, "options.json"), "utf8"));
+  } catch {
+    return {};
+  }
+  const port = (raw as { port?: unknown } | null)?.port;
+  return typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65535 ? { port } : {};
+}
+
 export function readEnv(): Env {
   const supervisorToken = process.env.SUPERVISOR_TOKEN || undefined;
+  const dataDir = resolve(process.env.DATA_DIR ?? (supervisorToken ? "/data" : "data"));
+  // As an app, the port set on the Configuration tab wins over the image's PORT.
+  const appPort = supervisorToken ? readAppOptions(dataDir).port : undefined;
   return {
-    port: intVar("PORT", 3123),
-    dataDir: resolve(process.env.DATA_DIR ?? (supervisorToken ? "/data" : "data")),
+    port: appPort ?? intVar("PORT", 3123),
+    dataDir,
     frontendRepo: process.env.GUEST_ASSISTANT_FRONTEND_REPO || undefined,
     supervisorToken,
     ingressPort: intVar("INGRESS_PORT", 8099),
     adminUiDir: resolve(process.env.ADMIN_UI_DIR ?? join(import.meta.dir, "../admin-ui/dist")),
+    flavor: process.env.GUEST_ASSISTANT_FLAVOR === "beta" ? "beta" : "stable",
   };
 }

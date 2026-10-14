@@ -1,0 +1,38 @@
+# Home Assistant app manifest of Guest Assistant Beta: the next version of
+# Guest Assistant for testing, installable beside the stable app (own slug,
+# data, Home Assistant user, ports and image). Installed from this repository,
+# the Supervisor pulls the image that CI builds when this version reaches main
+# (.github/workflows/build.yaml). `scripts/build-addon.sh --beta` packages a
+# local build instead.
+name: Guest Assistant Beta
+description: Test version of Guest Assistant; runs beside the stable app
+version: "0.9.0-beta.1"
+slug: guest_assistant_beta
+url: https://github.com/wendevlin/guest-assistant
+# Shown as experimental in the app store.
+stage: experimental
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+# Admin page inside HA; the app checks itself that the user is an administrator.
+# 0: the Supervisor picks a free port, so it never collides on the host network.
+ingress: true
+ingress_port: 0
+panel_icon: mdi:home-account
+panel_title: Guest Assistant Beta
+panel_admin: true
+# Host networking, so Guest Assistant can announce itself to the Home Assistant
+# companion apps on the local network (mDNS; off unless the admin switches it
+# on). The guest port opens directly on the host, so it is an option below
+# instead of a port mapping; 3124 keeps it free of the stable app's 3123.
+host_network: true
+options:
+  port: 3124
+schema:
+  port: port
+# Lets the app create its own non-admin HA user through the Supervisor.
+homeassistant_api: true
+hassio_api: true
+image: ghcr.io/wendevlin/{arch}-guest-assistant-beta
