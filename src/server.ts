@@ -151,6 +151,7 @@ export function createServer(runtime: Runtime, sessions: AdminSessions, port: nu
       },
       "/api/websocket": (req: BunRequest, server: Server<ConnState>) => wsProxy.upgrade(req, server),
       "/api/guest-assistant/session": { GET: mobileApp.session },
+      "/api/guest-assistant/app-cookie": { POST: mobileApp.appCookie },
       "/api/mobile_app/registrations": { POST: mobileApp.register },
       "/api/webhook/:id": { POST: mobileApp.webhook },
       "/auth/authorize": { GET: companionAuth.authorize, HEAD: companionAuth.authorize },

@@ -6,7 +6,8 @@ import { evaluate, type Obj } from "../proxy/ws-commands";
 import { FALLBACK_HA_VERSION, scrubComponents, scrubConfig } from "../proxy/ws-filters";
 import { AttemptLimiter } from "../rate-limit";
 import type { Runtime } from "../runtime";
-import type { AppTokenRow, DeviceInfo } from "./tokens";
+import { cookie } from "../admin/sessions";
+import { APP_WEB_COOKIE, APP_WEB_COOKIE_TTL_SECONDS, type AppTokenRow, type DeviceInfo } from "./tokens";
 
 /**
  * The parts of HA's mobile_app integration the companion apps need to
@@ -233,5 +234,27 @@ export function createMobileApp(runtime: Runtime, requireGuest: RequireGuest) {
     return json({ name: guest.name, dashboard_url_path: guest.dashboard.urlPath });
   }
 
-  return { register, webhook, session };
+  /**
+   * POST /api/guest-assistant/app-cookie: the guest page inside a companion
+   * app trades the app's access token for the web view cookie, so images,
+   * camera streams and HLS segments (plain requests without the token)
+   * load as in a browser. Renewed by the page on every (re)connect.
+   */
+  async function appCookie(req: BunRequest): Promise<Response> {
+    if (!enabled()) return new Response("Not Found", { status: 404 });
+    const auth = req.headers.get("authorization");
+    const payload = auth?.startsWith("Bearer ") ? runtime.appTokens.verify(auth.slice(7)) : null;
+    if (!payload) return new Response("Unauthorized", { status: 401 });
+    const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+    const secure = proto === "https" || new URL(req.url).protocol === "https:" || !!runtime.publicUrl?.startsWith("https:");
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "cache-control": "no-store",
+        "set-cookie": cookie(APP_WEB_COOKIE, runtime.appTokens.signWebCookie(payload), { path: "/", secure, maxAge: APP_WEB_COOKIE_TTL_SECONDS }),
+      },
+    });
+  }
+
+  return { register, webhook, session, appCookie };
 }

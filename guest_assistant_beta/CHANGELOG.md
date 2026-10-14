@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0-beta.2
+
+- Camera pictures, live streams and media player covers now show in the
+  companion app too.
+- The dashboard's menu in the companion app has "App settings", which opens
+  the app's own settings, for example to switch to another server.
+
 ## 0.9.0-beta.1
 
 First beta, the coming 0.9.0. It runs beside the stable app: own guests,
