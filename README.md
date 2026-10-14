@@ -308,11 +308,16 @@ bump `version` in `guest_assistant/config.yaml`, add an entry for it at the
 top of `guest_assistant/CHANGELOG.md` and merge to `main`. The Supervisor
 shows the changelog before an update, so write it for the people who install
 the app; `bun test` fails while its first entry is not the version in
-`config.yaml`. When that version has no tag `vX.Y.Z` yet, the workflow builds
-the app images for amd64 and aarch64, pushes them to
-`ghcr.io/wendevlin/{arch}-guest-assistant` and then creates the tag. The Supervisor already offers the update once the version is
-on `main`, so installing can fail with a 404 for the few minutes the build
-takes. Pushing a matching tag by hand releases as well.
+`config.yaml`. Each entry's heading is the bare version (`## 0.8.0`): Home
+Assistant cuts the changelog at these headings to show only the entries newer
+than the installed version, and shows the whole file if a heading carries
+anything else, such as a date. The Supervisor reads the file from the
+repository, so a fix to it shows without a release. When the version on
+`main` has no tag `vX.Y.Z` yet, the workflow builds the app images for amd64 and aarch64,
+pushes them to `ghcr.io/wendevlin/{arch}-guest-assistant` and then creates the
+tag. The Supervisor already offers the update once the version is on `main`,
+so installing can fail with a 404 for the few minutes the build takes. Pushing
+a matching tag by hand releases as well.
 The guest page in the image is the frontend release named in
 `.github/frontend-release`. CI unpacks its asset only if its SHA-256 matches
 `.github/frontend-release.sha256` (`sha256sum` format), so an asset replaced
