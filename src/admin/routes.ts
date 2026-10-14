@@ -44,7 +44,16 @@ const DashboardInput = z.strictObject({ id: z.string().min(1).max(200), answers:
 const DashboardPatch = z.strictObject({ answers: Answers.optional(), enabled: z.boolean().optional() });
 const GuestInput = z.strictObject({ username: Username, password: Password, dashboard: z.string().min(1), enabled: z.boolean().optional() });
 const GuestPatch = z.strictObject({ password: Password.optional(), dashboard: z.string().min(1).optional(), enabled: z.boolean().optional() });
-const SettingsInput = z.strictObject({ public_url: z.union([z.url({ protocol: /^https?$/ }), z.literal("")]) });
+const SettingsInput = z.strictObject({
+  public_url: z.union([z.url({ protocol: /^https?$/ }), z.literal("")]).optional(),
+  // Shown under the icon of the installed app; empty for the build's own name.
+  app_name: z
+    .string()
+    .trim()
+    .max(40)
+    .regex(/^[^\p{Cc}]*$/u, "must not contain control characters")
+    .optional(),
+});
 const UrlInput = z.strictObject({ url: z.string().min(1).max(500) });
 const CodeInput = z.strictObject({ code: z.string().min(1).max(20) });
 
@@ -122,6 +131,7 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
           }
         : null,
       public_url: identity?.kind === "admin" ? (runtime.publicUrl ?? null) : null,
+      app_name: identity?.kind === "admin" ? (runtime.appName ?? null) : null,
     };
   }
 
@@ -302,8 +312,9 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         return json(await runtime.createGuest(input), 201);
       }
       case "PUT settings": {
-        const { public_url } = await body(req, SettingsInput);
-        await runtime.setPublicUrl(public_url || undefined);
+        const { public_url, app_name } = await body(req, SettingsInput);
+        if (public_url !== undefined) await runtime.setPublicUrl(public_url || undefined);
+        if (app_name !== undefined) runtime.setAppName(app_name || undefined);
         return json(stateView(identity));
       }
     }

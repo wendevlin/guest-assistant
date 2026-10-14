@@ -12,6 +12,8 @@
   let reconnect = $state(false);
   let publicUrl = $state<string | null>(null);
   let saved = $state(false);
+  let appName = $state<string | null>(null);
+  let appNameSaved = $state(false);
   let error = $state<string | null>(null);
   let busy = $state(false);
 
@@ -25,6 +27,18 @@
       onstate(await api.saveSettings({ public_url: publicUrl ?? info.public_url ?? "" }));
       publicUrl = null;
       saved = true;
+    } catch (err) {
+      error = message(err);
+    }
+  }
+
+  async function saveAppName(e: SubmitEvent) {
+    e.preventDefault();
+    error = null;
+    try {
+      onstate(await api.saveSettings({ app_name: appName ?? info.app_name ?? "" }));
+      appName = null;
+      appNameSaved = true;
     } catch (err) {
       error = message(err);
     }
@@ -107,6 +121,30 @@
       <Card.Footer class="flex items-center gap-3">
         <Button type="submit" form="settings-form" variant="outline" disabled={publicUrl === null}>Save</Button>
         {#if saved}<span class="text-sm text-muted-foreground">Saved</span>{/if}
+      </Card.Footer>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header>
+        <Card.Title class="text-lg">App name</Card.Title>
+        <Card.Description>
+          Guests can add the guest page to their home screen as an app. This name is shown under its icon. Up to about 12 characters fit
+          without being cut off. Apps already on an iPhone keep the name they were added with; Android picks up a change after a while.
+        </Card.Description>
+      </Card.Header>
+      <Card.Content>
+        <form id="app-name-form" class="grid gap-3" onsubmit={saveAppName}>
+          <Input
+            maxlength={40}
+            placeholder="Guest Assistant"
+            value={appName ?? info.app_name ?? ""}
+            oninput={(e) => ((appName = e.currentTarget.value), (appNameSaved = false))}
+          />
+        </form>
+      </Card.Content>
+      <Card.Footer class="flex items-center gap-3">
+        <Button type="submit" form="app-name-form" variant="outline" disabled={appName === null}>Save</Button>
+        {#if appNameSaved}<span class="text-sm text-muted-foreground">Saved</span>{/if}
       </Card.Footer>
     </Card.Root>
   </div>

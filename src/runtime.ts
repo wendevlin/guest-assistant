@@ -78,6 +78,10 @@ export class Runtime {
     return this.store.get("public_url");
   }
 
+  get appName(): string | undefined {
+    return this.store.get("app_name");
+  }
+
   private buildAuth(): Auth {
     // Without an own secret better-auth would sign cookies with its
     // well-known default.
@@ -97,6 +101,11 @@ export class Runtime {
     if (url) this.store.set("public_url", new URL(url).origin);
     else this.store.delete("public_url");
     this._auth = this.buildAuth();
+  }
+
+  setAppName(name: string | undefined): void {
+    if (name) this.store.set("app_name", name);
+    else this.store.delete("app_name");
   }
 
   on<K extends keyof Listeners>(event: K, listener: Listeners[K][number]): void {

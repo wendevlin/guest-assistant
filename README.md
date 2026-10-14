@@ -207,6 +207,47 @@ A few settings are environment variables (Bun also reads a `.env` file, see
 Guests change their language in the settings dialog; the choice is stored
 on their device only.
 
+### Guests installing the app
+
+Guests can add the guest page to their home screen and use it like an app
+(a progressive web app): own icon, own window, no browser bars. Android and
+desktop Chrome offer "Install app" in the browser menu, on an iPhone it is
+Share → "Add to Home Screen". The name under the icon is "Guest Assistant"
+unless the admin sets another on the admin page (Settings → App name);
+the proxy puts it into `/manifest.json` and into the page's title. An
+iPhone keeps the name an app was added with, Android picks up a change
+after a while.
+
+- Android and desktop browsers install it as an app only over **https**
+  (a reverse proxy with a certificate). Over `http://` they only make a
+  shortcut that opens the browser, and there is no service worker.
+- An app on an iPhone keeps its own cookies, apart from Safari, so guests sign
+  in once more inside it.
+- Over https the service worker keeps the last guest page, so the app still
+  opens when the proxy is out of reach (a guest outside the home network) and
+  reconnects on its own. It stores nothing else: no API answers, no images.
+
+**Updates reach guests on their next load**, with or without the service
+worker:
+
+- The page (`index.html`), `sw.js`, `build.json` and every other file
+  without a content hash in its name are sent with `Cache-Control: no-cache`
+  and an ETag, so browsers ask on each use and get a cheap 304 when nothing
+  changed. Bundles, translations and icon sets with a content hash are
+  `immutable`. See `src/csp.ts`.
+- The service worker always asks the network for the page first and only falls
+  back to the stored one when the proxy does not answer.
+- Each frontend build has an id, in its bundle and in `build.json`. The app
+  compares them when it starts, comes back to the foreground and after every
+  reconnect; updating the app restarts the proxy, so every open app reconnects.
+  When they differ, the app reloads onto the new build.
+- When a build has no `sw.js` (for example after pinning an older frontend
+  release), the proxy sends a worker that removes itself and its cache
+  (`src/pwa.ts`), so no browser keeps an old one.
+
+Tabs that were opened before the first frontend with this update check
+keep running the version they loaded until they are reloaded once.
+
 ## What to know before exposing it
 
 - The database in `DATA_DIR` holds the proxy's HA token, the guests' password
@@ -293,6 +334,7 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
 - `GET /api/states`, `/api/states/:entity_id`, `/api/camera_proxy/:entity_id`, `/api/camera_proxy_stream/:entity_id`, `/api/image_proxy/:entity_id`, `/api/media_player_proxy/:entity_id`, `/api/calendars/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`, `/api/tts_proxy/*`, `/api/map_tiles/*`
 - `GET /static/*`, `/local/*` (public, as in HA)
+- `GET /manifest.json` (public, the build's manifest with the app name set on the admin page), `/sw.js` (the build's service worker, or one that removes itself), `/build.json` (id of the frontend build)
 
 ## License
 

@@ -8,6 +8,7 @@ export interface StateView {
   setup_code_required: boolean;
   ha: { url: string; state: "unconfigured" | "connecting" | "connected" | "error"; error: string | null; version: string | null; configured_by: string | null } | null;
   public_url: string | null;
+  app_name: string | null;
 }
 
 export interface QuestionView {
@@ -106,7 +107,7 @@ export const api = {
   updateGuest: (id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }) =>
     request<Guest>("PATCH", `guests/${enc(id)}`, changes),
   deleteGuest: (id: string) => request<{ ok: true }>("DELETE", `guests/${enc(id)}`),
-  saveSettings: (settings: { public_url: string }) => request<StateView>("PUT", "settings", settings),
+  saveSettings: (settings: { public_url?: string; app_name?: string }) => request<StateView>("PUT", "settings", settings),
 };
 
 /** A readable random password for guests. */
