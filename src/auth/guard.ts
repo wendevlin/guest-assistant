@@ -1,4 +1,5 @@
-import { resolveGuestToken, type AppTokens } from "../companion/tokens";
+import { readCookie } from "../admin/sessions";
+import { APP_WEB_COOKIE, APP_WEB_KID, resolveGuestToken, type AppTokens } from "../companion/tokens";
 import type { Dashboard } from "../dashboard";
 import { isGuestEnabled } from "../guests";
 import type { Runtime } from "../runtime";
@@ -8,8 +9,8 @@ export interface GuestIdentity {
   dashboard: Dashboard;
   /** better-auth session, or the companion app login of an app token */
   sessionId: string;
-  /** cookie session, the guest page's hass-token, or a companion app token */
-  kind: "cookie" | "session-token" | "app-token";
+  /** cookie session, the guest page's hass-token, a companion app token, or the app web view's cookie */
+  kind: "cookie" | "session-token" | "app-token" | "app-web";
   name: string;
 }
 
@@ -59,6 +60,16 @@ export function createGuard(runtime: Pick<Runtime, "auth" | "dashboards"> & { ap
     }
 
     if (!request.headers.get("cookie")) return new Response("Unauthorized", { status: 401 });
+
+    // The guest page inside a companion app (images, streams): its own cookie.
+    const appWeb = readCookie(request, APP_WEB_COOKIE);
+    const appWebPayload = appWeb ? runtime.appTokens.verify(appWeb, { kid: APP_WEB_KID }) : null;
+    if (appWebPayload) {
+      return resolveDashboard(
+        { userId: appWebPayload.sub, sessionId: appWebPayload.sid, kind: "app-web", name: appWebPayload.name ?? "Guest" },
+        appWebPayload.dashboard,
+      );
+    }
 
     const session = await runtime.auth.api.getSession({ headers: request.headers });
     if (!session) return new Response("Unauthorized", { status: 401 });

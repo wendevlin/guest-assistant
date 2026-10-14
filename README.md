@@ -268,7 +268,7 @@ endpoint below answers 404.
 | Sign in | `GET /auth/authorize` (web view), `POST /auth/token` | serves the guest frontend's `authorize.html`, which signs in through `POST /auth/login_flow` (only the official apps' client ids and `homeassistant://auth-callback`; 10 tries a minute per address) and hands the app a one-time code. The code becomes a refresh token (kept as a hash in `ga_app_tokens`, never rotated) and 15-minute access tokens |
 | Register | `POST /api/mobile_app/registrations` | stores device name and app version for the admin, answers a webhook id, no secret, no cloud URLs |
 | Run | `POST /api/webhook/:id` | `get_config` with the app name, HA's version, units and time zone, no location; sensors, locations, events and tags are acknowledged and dropped; templates, cameras, Assist and encryption are refused |
-| Show | `/?external_auth=1`, `WS /api/websocket` | the guest frontend takes its token from the app (`external_auth`) instead of a cookie; the socket is filtered like the guest page's |
+| Show | `/?external_auth=1`, `WS /api/websocket` | the guest frontend takes its token from the app (`external_auth`) instead of a cookie; the socket is filtered like the guest page's. Pictures and camera streams, which cannot carry the token, use a cookie the page gets for it (`/api/guest-assistant/app-cookie`). The page's menu has "App settings", where guests switch servers |
 | Sign out | `POST /auth/revoke`, `POST /auth/token` with `action=revoke` | ends the login and its connections |
 
 - App logins are tied to the guest like browser sessions: a new password or
@@ -427,6 +427,7 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 - `GET /static/*`, `/local/*` (public, as in HA)
 - `GET /manifest.json` (public, the build's manifest with the app name set on the admin page), `/sw.js` (the build's service worker, or one that removes itself), `/build.json` (id of the frontend build)
 - `GET /api/guest-assistant/session` → `{ name, dashboard_url_path }` (cookie or token; the guest page uses it in the companion app, where it has no cookie)
+- `POST /api/guest-assistant/app-cookie` (companion app token) sets the cookie `ga_app_web`, bound to the app login, so the guest page in the app loads images, camera streams and HLS like a browser does with its session cookie
 - Companion apps, only while switched on: `GET /auth/authorize`, `POST /auth/login_flow`, `POST /auth/token`, `POST /auth/revoke`, `POST /api/mobile_app/registrations`, `POST /api/webhook/:id`
 
 ## License

@@ -4,6 +4,18 @@ import type { Store } from "../store";
 
 /** Header `kid` of companion app access tokens. */
 export const APP_TOKEN_KID = "app";
+/** Header `kid` of the companion app web view's cookie (see APP_WEB_COOKIE). */
+export const APP_WEB_KID = "app-web";
+
+/**
+ * Cookie of the guest page inside a companion app. Images, camera streams and
+ * HLS segments load as plain requests that cannot carry the app's token; in a
+ * browser the session cookie authenticates them, in the app this one does.
+ * Bound to the app login like its tokens, and only accepted as a cookie.
+ */
+export const APP_WEB_COOKIE = "ga_app_web";
+/** Renewed on every (re)connect of the guest page, so a week is plenty. */
+export const APP_WEB_COOKIE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** Logins unused for this long are removed (the app then asks to sign in again). */
 export const APP_TOKEN_MAX_IDLE_DAYS = 90;
@@ -172,12 +184,18 @@ export class AppTokens {
   }
 
   /** An access token for the login, bound to the guest's current dashboard. */
-  sign(row: AppTokenRow, user: { id: string; name?: string }, dashboardId: string): string {
+  sign(row: AppTokenRow, user: { id: string; name?: string }, dashboardId: string, { kid = APP_TOKEN_KID, ttl = JWT_TTL_SECONDS } = {}): string {
     const now = Date.now();
     return signJWT(
-      { sub: user.id, sid: row.id, dashboard: dashboardId, name: user.name, gen: row.generation, iat: now, exp: Math.floor(now / 1000) + JWT_TTL_SECONDS },
-      { secret: this.secret, kid: APP_TOKEN_KID },
+      { sub: user.id, sid: row.id, dashboard: dashboardId, name: user.name, gen: row.generation, iat: now, exp: Math.floor(now / 1000) + ttl },
+      { secret: this.secret, kid },
     );
+  }
+
+  /** The web view cookie's value for the login an access token belongs to. */
+  signWebCookie(payload: GuestTokenPayload): string {
+    const row = this.get(payload.sid)!;
+    return this.sign(row, { id: payload.sub, name: payload.name }, payload.dashboard, { kid: APP_WEB_KID, ttl: APP_WEB_COOKIE_TTL_SECONDS });
   }
 
   /**
@@ -185,8 +203,8 @@ export class AppTokens {
    * that its login still exists for that guest in that generation.
    * Synchronous (bun:sqlite), so the WebSocket handshake stays synchronous.
    */
-  verify(token: string, { ignoreExpiry = false } = {}): GuestTokenPayload | null {
-    if (!this.enabled() || tokenKid(token) !== APP_TOKEN_KID) return null;
+  verify(token: string, { ignoreExpiry = false, kid = APP_TOKEN_KID } = {}): GuestTokenPayload | null {
+    if (!this.enabled() || tokenKid(token) !== kid) return null;
     const payload = decodeJWT(token, this.secret);
     if (!payload) return null;
     if (!ignoreExpiry && Date.now() / 1000 > payload.exp) return null;

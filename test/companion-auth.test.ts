@@ -234,3 +234,41 @@ describe("ending app logins", () => {
     expect(env.runtime.appTokens.listForUser(guest.id)).toEqual([]);
   });
 });
+
+describe("app web view cookie", () => {
+  const appCookie = (token: string) =>
+    fetch(`${env.url}/api/guest-assistant/app-cookie`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
+  const camera = (headers: Record<string, string>) => fetch(`${env.url}/api/camera_proxy/camera.garden`, { headers });
+
+  test("lets images and streams load without the token, like the browser's session cookie", async () => {
+    const tokens = await env.appLogin("guest", "guest-pass-123");
+    // An <img> sends neither a token nor (yet) a cookie.
+    expect((await camera({})).status).toBe(401);
+
+    const res = await appCookie(tokens.access_token);
+    expect(res.status).toBe(204);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/^ga_app_web=[^;]+; Path=\/; HttpOnly; SameSite=Lax/);
+    const cookie = setCookie.split(";")[0]!;
+
+    expect((await camera({ cookie })).status).toBe(200);
+    // Still only the dashboard's entities.
+    expect((await fetch(`${env.url}/api/camera_proxy/camera.bedroom`, { headers: { cookie } })).status).toBe(403);
+    // It is a cookie only: not a token, and it cannot register an app.
+    expect((await camera({ authorization: `Bearer ${cookie.split("=")[1]}` })).status).toBe(401);
+    const register = await fetch(`${env.url}/api/mobile_app/registrations`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: "{}" });
+    expect(register.status).toBe(403);
+
+    // It ends with the app login.
+    await postForm(`${env.url}/auth/revoke`, { token: tokens.refresh_token });
+    expect((await camera({ cookie })).status).toBe(401);
+  });
+
+  test("only for companion app tokens", async () => {
+    const signIn = await env.runtime.auth.api.signInUsername({ body: { username: "guest", password: "guest-pass-123" }, asResponse: true });
+    const sessionCookie = signIn.headers.getSetCookie().map((v) => v.split(";")[0]).join("; ");
+    const pageToken = (await env.hassToken(sessionCookie)).body.access_token as string;
+    expect((await appCookie(pageToken)).status).toBe(401);
+    expect((await appCookie("nonsense")).status).toBe(401);
+  });
+});

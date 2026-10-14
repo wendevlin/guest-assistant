@@ -6,7 +6,7 @@
 # local build instead.
 name: Guest Assistant Beta
 description: Test version of Guest Assistant; runs beside the stable app
-version: "0.9.0-beta.1"
+version: "0.9.0-beta.2"
 slug: guest_assistant_beta
 url: https://github.com/wendevlin/guest-assistant
 # Shown as experimental in the app store.
