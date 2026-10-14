@@ -3,7 +3,7 @@ import { createAuth, type Auth } from "./auth";
 import { AppTokens } from "./companion/tokens";
 import { migrate } from "./auth/migrate";
 import { Dashboard } from "./dashboard";
-import type { Env } from "./env";
+import type { Env, Flavor } from "./env";
 import { Guests } from "./guests";
 import { HaClient, HaCommandError } from "./ha/client";
 import type { HaEndpoint } from "./ha/endpoint";
@@ -58,6 +58,18 @@ export class Runtime {
   appPanelPath?: string;
   readonly appTokens: AppTokens;
   discoveryStatus: DiscoveryStatus = "off";
+  /** Why discovery is not possible, for the admin page. */
+  discoveryError?: string;
+  /** As an app: whether the Supervisor runs it with host networking (needed for discovery). */
+  hostNetwork?: boolean;
+  /** The guest port could not be opened; guests cannot connect. */
+  guestPortOpen = true;
+  /**
+   * Problems found while starting (e.g. a port in use), shown on the admin
+   * page and, as an app, in a notification in Home Assistant.
+   */
+  readonly startupProblems: string[] = [];
+  private startupNotified = false;
 
   private _auth: Auth;
   private listeners: Listeners = {
@@ -106,6 +118,28 @@ export class Runtime {
 
   get appName(): string | undefined {
     return this.store.get("app_name");
+  }
+
+  /** "Guest Assistant", or "Guest Assistant Beta" for the beta app, so both can be told apart. */
+  get productName(): string {
+    return this.env.flavor === "beta" ? "Guest Assistant Beta" : "Guest Assistant";
+  }
+
+  /** Records a start-up problem for the admin page and Home Assistant's notifications. */
+  reportStartupProblem(message: string): void {
+    console.error(message);
+    this.startupProblems.push(message);
+    if (this.client) void this.notifyStartupProblems();
+  }
+
+  private async notifyStartupProblems(): Promise<void> {
+    if (this.startupNotified || this.startupProblems.length === 0) return;
+    this.startupNotified = true;
+    await this.callService("persistent_notification", "create", {
+      notification_id: notificationId("_startup", this.env.flavor),
+      title: `${this.productName} has a problem`,
+      message: this.startupProblems.join("\n\n"),
+    });
   }
 
   get companion(): CompanionSettings {
@@ -260,6 +294,7 @@ export class Runtime {
       await this.loadDashboards();
       this.state = "connected";
       console.log(`Serving ${this.dashboards.size} guest dashboard(s).`);
+      void this.notifyStartupProblems();
     } catch (err) {
       client.close();
       if (generation !== this.generation) return;
@@ -471,7 +506,7 @@ export class Runtime {
       return;
     }
     const target = this.appPanelPath ?? (this.publicUrl ? `${this.publicUrl}/admin/` : undefined);
-    const link = target ? `\n\n[Open Guest Assistant](${target})` : "";
+    const link = target ? `\n\n[Open ${this.productName}](${target})` : "";
     const parts: string[] = [];
     if (dashboard.status === "rejected") {
       parts.push(`Guests cannot use the guest dashboard **${dashboard.id}**: ${dashboard.violations.map((v) => v.message).join("; ")}.`);
@@ -487,14 +522,14 @@ export class Runtime {
       );
     }
     await this.callService("persistent_notification", "create", {
-      notification_id: notificationId(dashboard.id),
-      title: "Guest Assistant needs your attention",
-      message: `${parts.join("\n\n")}\n\nDetails are on the Guest Assistant admin page.${link}`,
+      notification_id: notificationId(dashboard.id, this.env.flavor),
+      title: `${this.productName} needs your attention`,
+      message: `${parts.join("\n\n")}\n\nDetails are on the ${this.productName} admin page.${link}`,
     });
   }
 
   private async dismissNotification(id: string): Promise<void> {
-    await this.callService("persistent_notification", "dismiss", { notification_id: notificationId(id) });
+    await this.callService("persistent_notification", "dismiss", { notification_id: notificationId(id, this.env.flavor) });
   }
 
   private async callService(domain: string, service: string, data: Record<string, unknown>): Promise<void> {
@@ -522,6 +557,7 @@ export class Runtime {
 
 export class RuntimeError extends Error {}
 
-function notificationId(dashboardId: string): string {
-  return `guest_assistant_${dashboardId.replace(/[^a-z0-9_]/gi, "_")}`;
+/** Beta and stable can run on the same Home Assistant; their notifications must not replace each other's. */
+function notificationId(dashboardId: string, flavor: Flavor): string {
+  return `guest_assistant_${flavor === "beta" ? "beta_" : ""}${dashboardId.replace(/[^a-z0-9_]/gi, "_")}`;
 }

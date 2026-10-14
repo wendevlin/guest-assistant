@@ -75,7 +75,9 @@
         <g fill="#18BCF2"><circle cx="250" cy="290" r="24" /><path d="M206 395 V362 Q206 322 250 322 Q294 322 294 362 V395 Z" /></g>
       </svg>
       <h1 class="min-w-0 flex-1 truncate text-lg font-medium">
-        Guest Assistant <span class="font-normal text-muted-foreground">Admin</span>
+        Guest Assistant
+        {#if info?.flavor === "beta"}<Badge variant="warning" class="ms-1 align-middle">Beta</Badge>{/if}
+        <span class="font-normal text-muted-foreground">Admin</span>
       </h1>
       {#if info?.configured && signedIn}
         <Badge variant={connection === "connected" ? "success" : connection === "error" ? "destructive" : "warning"} title={info.ha?.error ?? ""}>
@@ -97,6 +99,12 @@
     {#if error}
       <Alert.Root variant="destructive"><Alert.Description>{error}</Alert.Description></Alert.Root>
     {/if}
+    {#each info?.problems ?? [] as problem (problem)}
+      <Alert.Root variant="destructive">
+        <Alert.Title>Guests cannot connect right now</Alert.Title>
+        <Alert.Description>{problem}</Alert.Description>
+      </Alert.Root>
+    {/each}
 
     {#if !info}
       <Spinner />

@@ -118,10 +118,33 @@ describe("announcer", () => {
     expect(runtime.discoveryStatus).toBe("off");
   });
 
+  test("as an app without host networking, discovery explains why it is off", () => {
+    (runtime as { mode: string }).mode = "app";
+    runtime.hostNetwork = false;
+    runtime.setCompanion({ enabled: true, discoverable: true });
+    expect(created).toBe(0);
+    expect(runtime.discoveryStatus).toBe("unavailable");
+    expect(runtime.discoveryError).toContain("host networking");
+  });
+
+  test("a guest port that could not be opened is not announced", () => {
+    runtime.guestPortOpen = false;
+    runtime.setCompanion({ enabled: true, discoverable: true });
+    expect(created).toBe(0);
+    expect(runtime.discoveryError).toContain("guest port");
+  });
+
+  test("the beta app announces itself as Guest Assistant Beta", () => {
+    (runtime.env as { flavor: string }).flavor = "beta";
+    runtime.setCompanion({ enabled: true, discoverable: true });
+    expect(fake!.ask(HA_SERVICE, "PTR")?.answers[0]?.data).toBe(`Guest Assistant Beta.${HA_SERVICE}`);
+  });
+
   test("socket errors make discovery unavailable instead of crashing", () => {
     runtime.setCompanion({ enabled: true, discoverable: true });
     fake!.emit("error", new Error("EADDRINUSE"));
     expect(runtime.discoveryStatus).toBe("unavailable");
+    expect(runtime.discoveryError).toContain("Multicast DNS is not available");
   });
 });
 

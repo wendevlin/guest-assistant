@@ -57,6 +57,7 @@ export function testEnvConfig(port: number): Env {
     frontendRepo: "./test/fixtures/frontend-repo",
     ingressPort: port + 1,
     adminUiDir: "./test/fixtures/admin-ui",
+    flavor: "stable",
   };
 }
 

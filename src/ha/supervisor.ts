@@ -30,14 +30,28 @@ export async function coreUrl(token: string): Promise<string> {
   return `${info.ssl ? "https" : "http"}://homeassistant:${info.port ?? 8123}`;
 }
 
-/** Path of this app's panel in the HA frontend, for links in notifications. */
-export async function ingressPanelPath(token: string): Promise<string | undefined> {
+/** What the Supervisor tells about this app. */
+export interface SelfInfo {
+  /** e.g. `1a2b3c4d_guest_assistant_beta` (the prefix depends on the repository) */
+  slug?: string;
+  name?: string;
+  /** Port the Supervisor's ingress proxy connects to; assigned by the Supervisor with `ingress_port: 0`. */
+  ingress_port?: number;
+  host_network?: boolean;
+}
+
+export async function selfInfo(token: string): Promise<SelfInfo | undefined> {
   try {
-    const info = await supervisorGet<{ slug?: string }>(token, "/addons/self/info");
-    return info.slug ? `/hassio/ingress/${info.slug}` : undefined;
-  } catch {
+    return await supervisorGet<SelfInfo>(token, "/addons/self/info");
+  } catch (err) {
+    console.warn("Could not read this app's details from the Supervisor:", err instanceof Error ? err.message : err);
     return undefined;
   }
+}
+
+/** Path of this app's panel in the HA frontend, for links in notifications. */
+export function ingressPanelPath(info: SelfInfo | undefined): string | undefined {
+  return info?.slug ? `/hassio/ingress/${info.slug}` : undefined;
 }
 
 interface CoreUser {

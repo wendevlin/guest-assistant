@@ -133,7 +133,14 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
         : null,
       public_url: identity?.kind === "admin" ? (runtime.publicUrl ?? null) : null,
       app_name: identity?.kind === "admin" ? (runtime.appName ?? null) : null,
-      companion: identity?.kind === "admin" ? { ...runtime.companion, discovery: runtime.discoveryStatus } : null,
+      companion:
+        identity?.kind === "admin"
+          ? { ...runtime.companion, discovery: runtime.discoveryStatus, discovery_error: runtime.discoveryError ?? null }
+          : null,
+      flavor: runtime.env.flavor,
+      guest_port: runtime.env.port,
+      // Start-up problems such as a port in use; only admins see the details.
+      problems: identity?.kind === "admin" ? runtime.startupProblems : [],
     };
   }
 

@@ -91,10 +91,17 @@ export class Announcer {
       this.stop("off");
       return;
     }
+    if (this.runtime.mode === "app" && this.runtime.hostNetwork === false) {
+      this.unavailable("This version of the app runs without host networking, which announcing on the local network needs.");
+      return;
+    }
+    if (!this.runtime.guestPortOpen) {
+      this.unavailable("The guest port could not be opened (see the problem above), so there is nothing to announce.");
+      return;
+    }
     const next = this.buildRecords();
     if (!next) {
-      this.stop("unavailable");
-      console.warn("[discovery] no LAN address found; the companion apps cannot discover Guest Assistant");
+      this.unavailable("No network address on the local network was found for this machine.");
       return;
     }
     if (!this.mdns && !this.open()) return;
@@ -103,21 +110,18 @@ export class Announcer {
     if (previous && (previous.names.instance !== next.names.instance || previous.names.host !== next.names.host)) this.goodbye(previous.answers);
     this.records = next;
     this.runtime.discoveryStatus = "active";
+    this.runtime.discoveryError = undefined;
     this.announce();
   }
 
   private open(): boolean {
     try {
       const mdns = this.factory();
-      mdns.on("error", (err: Error) => {
-        console.warn(`[discovery] mDNS is not available: ${err.message}`);
-        this.stop("unavailable");
-      });
+      mdns.on("error", (err: Error) => this.unavailable(`Multicast DNS is not available here (${err.message}).`));
       mdns.on("query", (query) => this.answer(query));
       this.mdns = mdns;
     } catch (err) {
-      console.warn(`[discovery] mDNS is not available: ${err instanceof Error ? err.message : String(err)}`);
-      this.stop("unavailable");
+      this.unavailable(`Multicast DNS is not available here (${err instanceof Error ? err.message : String(err)}).`);
       return false;
     }
     this.refreshTimer = setInterval(() => this.update(), REFRESH_MS);
@@ -130,7 +134,7 @@ export class Announcer {
     const ip = lanAddress(this.interfaces());
     if (!ip) return null;
     const runtime = this.runtime;
-    const label = instanceLabel(runtime.appName ?? "Guest Assistant");
+    const label = instanceLabel(runtime.appName ?? runtime.productName);
     const instance = `${label}.${HA_SERVICE}`;
     const host = `guest-assistant-${runtime.instanceId.slice(0, 8)}.local`;
     const port = runtime.env.port;
@@ -205,6 +209,13 @@ export class Announcer {
     }
   }
 
+  /** Stops and tells the admin page (and the log, once per reason) why discovery does not work. */
+  private unavailable(reason: string): void {
+    if (this.runtime.discoveryError !== reason) console.warn(`[discovery] ${reason}`);
+    this.stop("unavailable");
+    this.runtime.discoveryError = reason;
+  }
+
   stop(status: "off" | "unavailable" = "off"): void {
     for (const timer of this.announceTimers) clearTimeout(timer);
     this.announceTimers = [];
@@ -223,5 +234,6 @@ export class Announcer {
     }
     this.records = null;
     this.runtime.discoveryStatus = status;
+    if (status === "off") this.runtime.discoveryError = undefined;
   }
 }

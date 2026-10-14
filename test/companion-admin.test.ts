@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { ADMIN_COOKIE } from "../src/admin/sessions";
 import { MAX_CONNECTIONS_PER_APP_LOGIN } from "../src/proxy/ws";
+import { describeListenError } from "../src/listen-error";
 import { AttemptLimiter } from "../src/rate-limit";
 import { GuestWs, NATIVE_UA, startTestEnv, type TestEnv } from "./helpers";
 
@@ -31,7 +32,9 @@ afterAll(() => env.stop());
 
 describe("admin: companion app", () => {
   test("off by default; the settings switch it on and off", async () => {
-    expect((await call("GET", "state")).body.companion).toEqual({ enabled: false, discoverable: false, discovery: "off" });
+    const state = (await call("GET", "state")).body;
+    expect(state.companion).toEqual({ enabled: false, discoverable: false, discovery: "off", discovery_error: null });
+    expect(state).toMatchObject({ flavor: "stable", problems: [] });
     const on = await call("PUT", "settings", { companion: { enabled: true } });
     expect(on.body.companion).toMatchObject({ enabled: true, discoverable: false });
     expect((await call("PUT", "settings", { companion: { enabled: "yes" } })).status).toBe(400);
@@ -106,5 +109,28 @@ describe("AttemptLimiter", () => {
     setSystemTime(new Date("2026-01-01T00:01:01Z"));
     expect(limiter.take("a")).toBe(true);
     setSystemTime();
+  });
+});
+
+describe("start-up problems", () => {
+  test("a port in use is explained with what to do about it", () => {
+    const inUse = Object.assign(new Error("Failed to start server. Is port 3123 in use?"), { code: "EADDRINUSE" });
+    const app = describeListenError(inUse, 3123, "guest", "app")!;
+    expect(app).toContain("port 3123");
+    expect(app).toContain("already uses that port");
+    expect(app).toContain("Configuration tab");
+    expect(describeListenError(inUse, 3123, "guest", "standalone")).toContain("PORT");
+    expect(describeListenError(inUse, 8099, "ingress", "app")).toContain("Restart the app");
+    expect(describeListenError(new Error("boom"), 3123, "guest", "app")).toBeNull();
+  });
+
+  test("shows on the admin page and as a notification in Home Assistant", async () => {
+    const before = env.ha.serviceCalls.length;
+    env.runtime.reportStartupProblem("Guest Assistant cannot open the guest page (port 3123): taken.");
+    expect((await call("GET", "state")).body.problems).toEqual(["Guest Assistant cannot open the guest page (port 3123): taken."]);
+    await Bun.sleep(50);
+    const notification = env.ha.serviceCalls.slice(before).find((c) => c.domain === "persistent_notification" && c.service === "create");
+    expect(notification?.service_data).toMatchObject({ title: "Guest Assistant has a problem", notification_id: "guest_assistant__startup" });
+    env.runtime.startupProblems.length = 0;
   });
 });

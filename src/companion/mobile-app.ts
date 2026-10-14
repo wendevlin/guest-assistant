@@ -108,7 +108,7 @@ export function createMobileApp(runtime: Runtime, requireGuest: RequireGuest) {
       longitude: 0,
       elevation: 0,
       unit_system: unitSystem(scrubbed.unit_system),
-      location_name: runtime.appName ?? "Guest Assistant",
+      location_name: runtime.appName ?? runtime.productName,
       time_zone: typeof scrubbed.time_zone === "string" ? scrubbed.time_zone : "UTC",
       components: scrubComponents(ha.components, { companion: true }),
       version: runtime.haVersion ?? (typeof ha.version === "string" ? ha.version : FALLBACK_HA_VERSION),

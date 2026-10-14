@@ -140,6 +140,11 @@
             <p class="text-sm text-muted-foreground">
               Guests open: <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{guestLink}</code>
             </p>
+          {:else if info.mode === "app"}
+            <p class="text-sm text-muted-foreground">
+              Guests open port <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{info.guest_port}</code> of your Home Assistant
+              machine. Change it on the app's Configuration tab.
+            </p>
           {/if}
         </form>
       </Card.Content>
@@ -201,11 +206,13 @@
                 <Label for="companion-discoverable">Show in the app's server list on this network</Label>
                 <p class="text-sm text-muted-foreground">
                   The app finds Guest Assistant under the app name above, next to your own Home Assistant.
-                  {#if info.mode === "app"}This needs the app's host network access, which it has since version 0.9.0.{/if}
                 </p>
                 {#if companion.discoverable && companion.discovery === "unavailable"}
                   <Alert.Root variant="warning">
-                    <Alert.Description>Announcing on the local network is not possible here (no multicast or no network address).</Alert.Description>
+                    <Alert.Description>
+                      The app cannot find Guest Assistant on its own: {companion.discovery_error ?? "announcing on the local network is not possible here."}
+                      Guests can still add it with the link below.
+                    </Alert.Description>
                   </Alert.Root>
                 {/if}
               </div>

@@ -10,6 +10,12 @@ export interface StateView {
   public_url: string | null;
   app_name: string | null;
   companion: CompanionView | null;
+  /** "beta" for Guest Assistant Beta. */
+  flavor: "stable" | "beta";
+  /** Port guests open. */
+  guest_port: number;
+  /** Problems found while starting, such as a port in use (admins only). */
+  problems: string[];
 }
 
 export interface CompanionView {
@@ -19,6 +25,8 @@ export interface CompanionView {
   discoverable: boolean;
   /** Whether the announcement runs; "unavailable" without multicast or a LAN address. */
   discovery: "off" | "active" | "unavailable";
+  /** Why discovery does not work, when it does not. */
+  discovery_error: string | null;
 }
 
 export interface QuestionView {

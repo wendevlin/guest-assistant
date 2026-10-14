@@ -20,6 +20,7 @@ export async function connectWithAdmin(runtime: Runtime, admin: HaClient, haUrl:
     haUrl: url,
     previousUserId: sameHa ? previous.user_id : undefined,
     localOnly: isLocalAddress(url),
+    userName: runtime.productName,
   });
   console.log(`Created Home Assistant user "${user.username}" for the proxy (set up by ${adminName}).`);
   await runtime.setHaSettings({ url, token: user.token, user_id: user.userId, configured_by: adminName });
