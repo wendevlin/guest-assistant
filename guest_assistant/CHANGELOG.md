@@ -1,26 +1,5 @@
 # Changelog
 
-## 0.9.0
-
-- Guests can use the Home Assistant companion app. Switch on "Allow the
-  companion app" on the Settings tab: guests then add Guest Assistant as a
-  server in the app, sign in with their guest account and see their
-  dashboard there. Sensors, location and notifications from the app are not
-  used. It is off by default, because Guest Assistant then answers the app
-  like a Home Assistant server would.
-- Widgets, device controls and watch faces of the app can be allowed per
-  dashboard (Dashboards tab, "Widgets in the companion app"). They only
-  offer the entities of that dashboard.
-- "Show in the app's server list on this network" announces Guest Assistant
-  on the local network, so the app lists it under the app name. The
-  Settings tab also shows a link that opens the app with Guest Assistant
-  filled in.
-- The Guests tab lists the phones a guest signed in with the app on; each
-  one can be signed out there.
-- The app now uses host networking, which announcing on the local network
-  needs. Guests keep opening port 3123; it can no longer be changed under
-  "Network". If you had changed it, update the links you gave out.
-
 ## 0.8.0
 
 - Guests can add the guest page to their home screen as an app, with the

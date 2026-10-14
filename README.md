@@ -128,6 +128,8 @@ Assistant with this button:
 
 Or add it by hand: in Home Assistant go to Settings > Apps > App store > ⋮ > Repositories, add
 `https://github.com/wendevlin/guest-assistant` and install "Guest Assistant".
+The repository also offers "Guest Assistant Beta", the next version for
+testing, which installs beside it (see [Beta app](#beta-app)).
 The Supervisor pulls the prebuilt image for your machine (amd64 or aarch64).
 `guest_assistant/DOCS.md` is the documentation shown in Home Assistant.
 
@@ -250,6 +252,9 @@ keep running the version they loaded until they are reloaded once.
 
 ### Guests using the companion app
 
+> Available in Guest Assistant Beta (see [Beta app](#beta-app)); it comes
+> to the stable app with 0.9.0.
+
 The Home Assistant companion apps (iOS and Android) are a web view around
 the frontend plus a native part that talks to a few server endpoints. With
 "Allow the companion app" switched on (Settings tab, **off by default**),
@@ -287,8 +292,10 @@ endpoint below answers 404.
 - **Discovery** ("Show in the app's server list on this network"): the proxy
   announces itself like HA via mDNS (`_home-assistant._tcp`, under the app
   name, with its own `uuid`), so the apps list it next to the real Home
-  Assistant. Needs multicast: host networking in Docker; the HA app uses
-  host networking since 0.9.0, which is why its guest port is fixed at 3123.
+  Assistant. Needs multicast: host networking in Docker. Guest Assistant
+  Beta (the HA app) runs with host networking; its guest port is therefore
+  an option on its Configuration tab, and the Supervisor picks its ingress
+  port.
 - The apps pick features by the reported HA version (the JavaScript bridge,
   `frontend/loaded`). Keep the pinned guest frontend close to the HA
   version.
@@ -374,6 +381,33 @@ after the release cannot reach the image. To ship a newer frontend, run
 `scripts/pin-frontend.sh <release>`: it downloads the asset and writes both
 files. The hash is whatever GitHub serves at that moment, so pin a release
 you know and commit both files together.
+
+#### Beta app
+
+The repository holds a second app, **Guest Assistant Beta**
+(`guest_assistant_beta/`), for testing on a real Home Assistant before a
+version reaches the stable app. It installs beside the stable app: own slug,
+data, Home Assistant user ("Guest Assistant Beta"), image
+(`ghcr.io/wendevlin/{arch}-guest-assistant-beta`), sidebar entry and icon
+with a "BETA" badge, and guest port 3124 (an option on its Configuration
+tab). Its ingress port is picked by the Supervisor (`ingress_port: 0`).
+
+- Both apps are built from the code on `main`. The stable app only changes
+  when its `version` is raised; until then main is the beta.
+- To publish a beta, raise `version` in `guest_assistant_beta/config.yaml`
+  (`0.9.0-beta.2`), add its entry at the top of
+  `guest_assistant_beta/CHANGELOG.md` and merge to `main`. CI builds the beta
+  image and tags `beta-v0.9.0-beta.2`.
+- The beta's frontend is pinned separately: `scripts/pin-frontend.sh --beta
+  <release>` writes `.github/frontend-release-beta`. A prerelease of the
+  frontend fork, built from a pull request's branch, works there (run its
+  "Guest Assistant frontend" workflow on that branch).
+- To promote, copy what the beta proved (config, docs, changelog entry,
+  frontend pin) to `guest_assistant/` and raise its version.
+- `scripts/build-addon.sh --beta` packages the beta for a local install
+  (`dist/addon/guest_assistant_beta/`); with
+  `GUEST_ASSISTANT_FRONTEND_REF=<branch>` it builds the frontend from that
+  branch of the frontend checkout.
 
 The admin page lives in `admin-ui/`: Svelte 5 with shadcn-svelte components,
 built by Bun alone (`admin-ui/build.ts` with `bun-plugin-svelte` and

@@ -1,0 +1,6 @@
+configuration:
+  port:
+    name: Guest port
+    description: >-
+      Port guests open on your Home Assistant machine. No other app may use
+      it; the stable Guest Assistant uses 3123. Restart the app after a change.

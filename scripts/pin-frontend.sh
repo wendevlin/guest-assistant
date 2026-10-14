@@ -8,13 +8,21 @@
 # (built from the guest-assistant branch of wendevlin/guest-assistant-frontend)
 # and commit both files together.
 #
-# Usage: scripts/pin-frontend.sh <release>   (e.g. 2026.10.01-a43d77ee5)
+# Usage: scripts/pin-frontend.sh [--beta] <release>   (e.g. 2026.10.01-a43d77ee5)
+#   --beta  pin the frontend of Guest Assistant Beta instead
+#           (.github/frontend-release-beta and its .sha256); a prerelease
+#           built from a pull request's branch is fine there
 
 set -e
 
 cd "$(dirname "$0")/.."
 
-release=${1:?usage: scripts/pin-frontend.sh <release tag of wendevlin/guest-assistant-frontend>}
+pin=.github/frontend-release
+if [ "$1" = "--beta" ]; then
+  pin=.github/frontend-release-beta
+  shift
+fi
+release=${1:?usage: scripts/pin-frontend.sh [--beta] <release tag of wendevlin/guest-assistant-frontend>}
 case $release in
   *[!A-Za-z0-9._-]*) echo "Not a release tag: $release" >&2; exit 1 ;;
 esac
@@ -32,6 +40,6 @@ else
 fi
 hash=${sum%% *}
 
-printf '%s\n' "$release" > .github/frontend-release
-printf '%s  %s\n' "$hash" "$asset" > .github/frontend-release.sha256
-echo "Pinned the guest frontend $release ($asset, SHA-256 $hash)"
+printf '%s\n' "$release" > "$pin"
+printf '%s  %s\n' "$hash" "$asset" > "$pin.sha256"
+echo "Pinned the guest frontend $release in $pin ($asset, SHA-256 $hash)"
