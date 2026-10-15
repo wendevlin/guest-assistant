@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2
+
+- The guest page is built on the Home Assistant 2026.10.1 frontend.
+
 ## 0.8.1
 
 - The guest page is built on the Home Assistant 2026.10.1 frontend.
