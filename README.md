@@ -382,6 +382,60 @@ after the release cannot reach the image. To ship a newer frontend, run
 files. The hash is whatever GitHub serves at that moment, so pin a release
 you know and commit both files together.
 
+#### Following Home Assistant releases
+
+The guest page has to stay close to the Home Assistant version it runs
+against. Each app follows a Home Assistant channel:
+
+| App | Follows | Frontend releases |
+|---|---|---|
+| Guest Assistant | stable releases (`2026.10.0`, `2026.10.1`, …) | latest releases of the frontend fork (branch `guest-assistant`) |
+| Guest Assistant Beta | the beta channel: `2026.11.0b0` … `b7`, then `2026.11.0`, `2026.11.1`, … until the next b0 | prereleases with `Channel: beta` (branch `guest-assistant-beta`) |
+
+So Guest Assistant Beta is meant for a Home Assistant on the beta channel;
+on a stable Home Assistant it runs a newer frontend than core during beta
+weeks. Its changelog says so for each beta.
+
+Every morning the frontend fork merges the newest Home Assistant releases
+into its channel branches, checks and releases them (see its
+`guest-assistant/README.md`). Each release reaches this repository through
+`.github/workflows/frontend-update.yaml`, which opens one pull request per
+channel (`frontend-update/stable`, `frontend-update/beta`, label
+`frontend-update`) with the new pin, the next version
+(`scripts/bump-version.ts`: `0.8.0` → `0.8.1`, `0.9.0-beta.2` →
+`0.9.0-beta.3`, a version that is not released yet is kept) and a changelog
+line naming the Home Assistant release. A newer release of the same channel
+rebuilds the open pull request from `main`, so do not push your own commits to
+it; put changes for the release into `main` instead. The workflow also runs on
+a schedule, in case the fork's announcement got lost.
+
+`.github/workflows/ha-release-analysis.md` (a GitHub Agentic Workflow on
+Copilot, compiled to `ha-release-analysis.lock.yml` with `gh aw compile`)
+then comments on the pull request: `scripts/ha-release-diff.sh` diffs the
+parts of Home Assistant core and frontend that the proxy depends on, and the
+agent checks them against the proxy's allowlists and denylists. Each finding
+is rated **Blocks the release**, **Needs a proxy change** or **For
+information**. Merge the pull request the day after a Home Assistant release,
+once nothing blocks it; for a blocking finding, fix the proxy on `main` first,
+then "Update branch" on the pull request. To repeat the analysis, run
+the workflow by hand with the pull request's number; locally,
+`scripts/ha-release-diff.sh <number> <dir>` (or `PR_BODY=…` without a pull
+request) prepares the same diffs for any agent.
+
+When the fork cannot take a release (merge conflict, failing check), an issue
+"Frontend sync: …" opens here instead, with the commands to fix it by hand.
+
+Secrets, in both repositories unless noted:
+
+- `GUEST_ASSISTANT_BOT_TOKEN`: a fine-grained token of the repository owner
+  for both repositories, with read and write access to contents, issues,
+  pull requests and workflows. Pull requests and pushes made with the default
+  token would not start `build.yaml` or the analysis.
+- `COPILOT_GITHUB_TOKEN` (this repository only): a fine-grained token of the
+  owner with the account permission "Copilot Requests: Read". The analysis
+  runs on this account's Copilot; agentic workflows in personal repositories
+  cannot use the default token for it.
+
 #### Beta app
 
 The repository holds a second app, **Guest Assistant Beta**
@@ -399,9 +453,11 @@ tab). Its ingress port is picked by the Supervisor (`ingress_port: 0`).
   `guest_assistant_beta/CHANGELOG.md` and merge to `main`. CI builds the beta
   image and tags `beta-v0.9.0-beta.2`.
 - The beta's frontend is pinned separately: `scripts/pin-frontend.sh --beta
-  <release>` writes `.github/frontend-release-beta`. A prerelease of the
-  frontend fork, built from a pull request's branch, works there (run its
-  "Guest Assistant frontend" workflow on that branch).
+  <release>` writes `.github/frontend-release-beta`. Usually
+  `frontend-update.yaml` does this (see above). A prerelease of the frontend
+  fork, built from a pull request's branch, works there too (run its
+  "Guest Assistant frontend" workflow on that branch); the next beta channel
+  release replaces it.
 - To promote, copy what the beta proved (config, docs, changelog entry,
   frontend pin) to `guest_assistant/` and raise its version.
 - `scripts/build-addon.sh --beta` packages the beta for a local install
