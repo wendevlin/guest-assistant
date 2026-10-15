@@ -195,7 +195,7 @@ jobs:
           Previous frontend: $PREVIOUS_FRONTEND
           Previous release: $PINNED
 
-          The Home Assistant release analysis (\`ha-release-analysis\` workflow) adds its report to this pull request: \`docs/ha-compat/$CORE.md\` and a comment. Merge once it has nothing that blocks the release; merging releases the app.
+          The Home Assistant release analysis (\`ha-release-analysis\` workflow) comments on this pull request with what the Home Assistant release changes for the proxy. Merge once it has nothing that blocks the release; merging releases the app.
 
           Opened by \`.github/workflows/frontend-update.yaml\`.
           EOF
