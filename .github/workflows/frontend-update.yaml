@@ -1,0 +1,210 @@
+name: Frontend update
+
+# Opens a pull request that pins a new guest frontend for an app:
+#
+# | Channel | App                  | Pin                           | Follows Home Assistant |
+# |---------|----------------------|-------------------------------|------------------------|
+# | stable  | Guest Assistant      | .github/frontend-release      | stable releases        |
+# | beta    | Guest Assistant Beta | .github/frontend-release-beta | the beta channel       |
+#
+# The frontend releases come from wendevlin/guest-assistant-frontend, whose
+# upstream-sync.yaml merges each Home Assistant release every morning and
+# announces the build here (repository_dispatch `frontend-release`). The
+# daily schedule catches a release whose announcement got lost.
+#
+# The pull request (branch frontend-update/<channel>, label frontend-update)
+# carries the pin, the next app version and a changelog entry
+# (scripts/bump-version.ts). A newer release of the same channel updates the
+# open pull request instead of opening another. ha-release-analysis.md adds
+# its report of the Home Assistant changes to it. Merging releases the app
+# (build.yaml).
+#
+# Pushes and the pull request use GUEST_ASSISTANT_BOT_TOKEN, so build.yaml and
+# the analysis run on the pull request; the default token would not start them.
+
+on:
+  repository_dispatch:
+    types: [frontend-release]
+  schedule:
+    # An hour after the frontend's sync usually finished.
+    - cron: "40 5 * * *"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Channel to update
+        type: choice
+        options: [both, stable, beta]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-update
+  cancel-in-progress: false
+
+env:
+  FRONTEND_REPO: wendevlin/guest-assistant-frontend
+
+jobs:
+  update:
+    name: Update ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: stable
+            pin: .github/frontend-release
+            flag: ""
+            app: Guest Assistant
+          - channel: beta
+            pin: .github/frontend-release-beta
+            flag: --beta
+            app: Guest Assistant Beta
+    steps:
+      - name: Find the release
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ matrix.channel }}
+          EVENT: ${{ github.event_name }}
+          WANTED: ${{ github.event.client_payload.channel || inputs.channel || 'both' }}
+          RELEASE: ${{ github.event.client_payload.release }}
+        run: |
+          if [ "$WANTED" != both ] && [ "$WANTED" != "$CHANNEL" ]; then
+            echo "Not asked for $CHANNEL"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The newest release of the channel; the notes say which one it is
+          # ("Channel: beta"). The announced one when there is one.
+          if [ "$EVENT" = repository_dispatch ] && [ -n "$RELEASE" ]; then
+            filter=".tag_name == \"$RELEASE\""
+          else
+            filter="(.body // \"\") | test(\"(?m)^Channel: $CHANNEL\\\\s*$\")"
+          fi
+          release=$(gh api "repos/$FRONTEND_REPO/releases?per_page=50" \
+            --jq "[.[] | select(.draft | not) | select($filter)][0]")
+          [ -n "$release" ] && [ "$release" != null ] || { echo "No $CHANNEL release found" >&2; exit 1; }
+          field() { printf '%s' "$release" | jq -r ".body // \"\"" | sed -n "s/^$1: *\\([^ ]*\\) *\$/\\1/p" | head -n 1; }
+          {
+            echo "release=$(printf '%s' "$release" | jq -r .tag_name)"
+            echo "url=$(printf '%s' "$release" | jq -r .html_url)"
+            echo "frontend=$(field Frontend)"
+            echo "core=$(field Core)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        if: steps.find.outputs.skip != 'true'
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Compare with the pin
+        id: compare
+        if: steps.find.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN: ${{ matrix.pin }}
+          CHANNEL: ${{ matrix.channel }}
+          RELEASE: ${{ steps.find.outputs.release }}
+        run: |
+          pinned=$(cat "$PIN")
+          if [ "$pinned" = "$RELEASE" ]; then
+            echo "$PIN already pins $RELEASE"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # An open pull request that already pins it is up to date.
+          branch="frontend-update/$CHANNEL"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git fetch --depth=1 origin "$branch"
+            if [ "$(git show "FETCH_HEAD:$PIN")" = "$RELEASE" ]; then
+              echo "$branch already pins $RELEASE"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          # What the app runs now, from the pinned release's notes. Releases
+          # from before the channels have no such lines.
+          body=$(gh api "repos/$FRONTEND_REPO/releases/tags/$pinned" --jq '.body // ""' || true)
+          field() { printf '%s\n' "$body" | sed -n "s/^$1: *\\([^ ]*\\) *\$/\\1/p" | head -n 1; }
+          frontend=$(field Frontend)
+          core=$(field Core)
+          {
+            echo "pinned=$pinned"
+            echo "previous_frontend=${frontend:-unknown}"
+            echo "previous_core=${core:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.find.outputs.skip != 'true' && steps.compare.outputs.skip != 'true'
+        with:
+          bun-version: "1.4"
+
+      - name: Pin, bump and check
+        id: bump
+        if: steps.find.outputs.skip != 'true' && steps.compare.outputs.skip != 'true'
+        env:
+          FLAG: ${{ matrix.flag }}
+          RELEASE: ${{ steps.find.outputs.release }}
+          CORE: ${{ steps.find.outputs.core }}
+        run: |
+          bun install --frozen-lockfile
+          # shellcheck disable=SC2086 # FLAG is empty or one word
+          scripts/pin-frontend.sh $FLAG "$RELEASE"
+          # shellcheck disable=SC2086
+          version=$(bun scripts/bump-version.ts $FLAG --core "$CORE")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          bun test test/changelog.test.ts
+
+      - name: Open or update the pull request
+        if: steps.find.outputs.skip != 'true' && steps.compare.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GUEST_ASSISTANT_BOT_TOKEN }}
+          CHANNEL: ${{ matrix.channel }}
+          APP: ${{ matrix.app }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          RELEASE: ${{ steps.find.outputs.release }}
+          RELEASE_URL: ${{ steps.find.outputs.url }}
+          FRONTEND: ${{ steps.find.outputs.frontend }}
+          CORE: ${{ steps.find.outputs.core }}
+          PINNED: ${{ steps.compare.outputs.pinned }}
+          PREVIOUS_FRONTEND: ${{ steps.compare.outputs.previous_frontend }}
+          PREVIOUS_CORE: ${{ steps.compare.outputs.previous_core }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "GUEST_ASSISTANT_BOT_TOKEN is not set" >&2; exit 1; }
+          branch="frontend-update/$CHANNEL"
+          title="$APP $VERSION: Home Assistant $CORE frontend"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "Pin the $CHANNEL frontend $RELEASE (Home Assistant $CORE)" \
+            -m "Raises $APP to $VERSION."
+          # Always rebuilt from main, so the pull request never goes stale.
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+
+          body=$(cat <<EOF
+          Pins the guest frontend [$RELEASE]($RELEASE_URL) for **$APP** and raises it to **$VERSION**.
+
+          Channel: $CHANNEL
+          Core: $CORE
+          Previous core: $PREVIOUS_CORE
+          Frontend: $FRONTEND
+          Previous frontend: $PREVIOUS_FRONTEND
+          Previous release: $PINNED
+
+          The Home Assistant release analysis (\`ha-release-analysis\` workflow) adds its report to this pull request: \`docs/ha-compat/$CORE.md\` and a comment. Merge once it has nothing that blocks the release; merging releases the app.
+
+          Opened by \`.github/workflows/frontend-update.yaml\`.
+          EOF
+          )
+          gh label create frontend-update --color 0e8a16 \
+            --description "Pins a new guest frontend" --force >/dev/null
+          number=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body "$body" --label frontend-update
+          fi
