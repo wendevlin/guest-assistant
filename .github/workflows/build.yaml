@@ -37,6 +37,14 @@ on:
 permissions:
   contents: read
 
+# Pushes to main run one after the other: two merges in quick succession
+# would otherwise both see the new version untagged, both release it, and
+# the second fails to push the tag. Waiting lets the second see the tag. A
+# pull request's newer push cancels its older run.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Typecheck and test
