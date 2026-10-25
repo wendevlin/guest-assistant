@@ -84,6 +84,7 @@ export class Runtime {
   private haConfigCache?: { at: number; config: Record<string, unknown> };
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private autoDisableTimer: ReturnType<typeof setTimeout> | null = null;
   /** dashboard id → what the admin was last notified about (see notifyAdmin) */
   private notified = new Map<string, string>();
   private generation = 0;
@@ -172,6 +173,7 @@ export class Runtime {
     this.pruneAppTokens();
     this.pruneTimer = setInterval(() => this.pruneAppTokens(), 86_400_000);
     this.pruneTimer.unref();
+    await this.scheduleAutoDisable();
   }
 
   async setPublicUrl(url: string | undefined): Promise<void> {
@@ -453,15 +455,19 @@ export class Runtime {
 
   // ── guests ──────────────────────────────────────────────────────────────
 
-  async createGuest(input: { username: string; password: string; dashboard: string; enabled?: boolean }) {
+  async createGuest(input: { username: string; password: string; dashboard: string; enabled?: boolean; disableAt?: Date | null }) {
     if (!this.store.getDashboard(input.dashboard)) throw new RuntimeError(`Dashboard "${input.dashboard}" is not a guest dashboard`);
-    return this.guests.create(input);
+    checkDisableAt(input.disableAt);
+    const guest = await this.guests.create(input);
+    if (input.disableAt) await this.scheduleAutoDisable();
+    return guest;
   }
 
-  async updateGuest(id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }) {
+  async updateGuest(id: string, changes: { password?: string; dashboard?: string; enabled?: boolean; disableAt?: Date | null }) {
     if (changes.dashboard !== undefined && !this.store.getDashboard(changes.dashboard)) {
       throw new RuntimeError(`Dashboard "${changes.dashboard}" is not a guest dashboard`);
     }
+    checkDisableAt(changes.disableAt);
     const before = await this.guests.get(id);
     const guest = await this.guests.update(id, changes);
     // Like the guest's browser sessions: a new password ends the app logins.
@@ -469,10 +475,11 @@ export class Runtime {
     // tokens; the next refresh is checked again (and binds the new dashboard).
     if (changes.password !== undefined) {
       this.endAppSessions(this.appTokens.deleteForUser(id));
-    } else if (before && (guest.dashboard !== before.dashboard || guest.enabled !== before.enabled)) {
+    } else if (before && (guest.dashboard !== before.dashboard || guest.enabled !== before.enabled || changes.enabled === false)) {
       this.appTokens.bumpGeneration(id);
     }
     this.emit("guestChanged", id);
+    if (changes.disableAt !== undefined || changes.enabled !== undefined) await this.scheduleAutoDisable();
     return guest;
   }
 
@@ -480,6 +487,44 @@ export class Runtime {
     await this.guests.delete(id);
     this.endAppSessions(this.appTokens.deleteForUser(id));
     this.emit("guestChanged", id);
+    await this.scheduleAutoDisable();
+  }
+
+  /** A new login link for the guest; the old one stops working. */
+  createLoginLink(id: string) {
+    return this.guests.setLoginLink(id, randomBytes(32).toString("base64url"));
+  }
+
+  removeLoginLink(id: string) {
+    return this.guests.setLoginLink(id, null);
+  }
+
+  /**
+   * Switches off the guests whose `disableAt` has come, like the admin
+   * would, then waits for the next one. Until then the guard already treats
+   * them as inactive (isGuestEnabled), so a late timer only delays closing
+   * their connections.
+   */
+  private async scheduleAutoDisable(): Promise<void> {
+    if (this.autoDisableTimer) clearTimeout(this.autoDisableTimer);
+    this.autoDisableTimer = null;
+    let next = Infinity;
+    for (const guest of await this.guests.list()) {
+      if (!guest.disableAt) continue;
+      const at = Date.parse(guest.disableAt);
+      if (at <= Date.now()) {
+        console.log(`Guest ${guest.username} switched off as scheduled.`);
+        // Calls back into this method; the loop below is stale after that.
+        await this.updateGuest(guest.id, { enabled: false });
+        return;
+      }
+      next = Math.min(next, at);
+    }
+    if (next === Infinity) return;
+    // setTimeout overflows above ~24.8 days; it then just checks again.
+    const delay = Math.min(next - Date.now(), MAX_TIMEOUT_MS);
+    this.autoDisableTimer = setTimeout(() => void this.scheduleAutoDisable().catch(logAutoDisableError), delay);
+    this.autoDisableTimer.unref();
   }
 
   // ── admin notifications ────────────────────────────────────────────────
@@ -550,12 +595,23 @@ export class Runtime {
     this.generation++;
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.autoDisableTimer) clearTimeout(this.autoDisableTimer);
     this.client?.close();
     this.client = null;
   }
 }
 
 export class RuntimeError extends Error {}
+
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+function checkDisableAt(disableAt: Date | null | undefined): void {
+  if (disableAt && disableAt.getTime() <= Date.now()) throw new RuntimeError("The time to switch the guest off must be in the future");
+}
+
+function logAutoDisableError(err: unknown): void {
+  console.error("Could not switch off guests as scheduled:", err instanceof Error ? err.message : err);
+}
 
 /** Beta and stable can run on the same Home Assistant; their notifications must not replace each other's. */
 function notificationId(dashboardId: string, flavor: Flavor): string {

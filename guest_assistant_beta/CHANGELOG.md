@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.0-beta.1
+
+First beta of the coming 0.10.0. It includes everything from the 0.9.0 betas.
+
+- Guests can get a login link on the Guests tab: it signs them in without
+  username and password, as often as needed, while the account is active.
+  "New link" or "Remove link" stops the old one. Turn it into a QR code with
+  any QR tool. The link needs a guest page update that follows in a later
+  beta; until then it opens the normal login.
+- "Switch off automatically" on a guest switches the account off at a date
+  and time you pick, for example after a babysitting evening. The guest is
+  signed out right then.
+
 ## 0.9.0-beta.4
 
 - The guest page is built on the Home Assistant 2026.10.1 frontend.

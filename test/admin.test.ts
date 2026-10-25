@@ -357,7 +357,7 @@ describe("admin decisions on a dashboard", () => {
 
     const moved = await a.call("PATCH", `guests/${links.id}`, { dashboard: "guest-dash" });
     expect(moved.status).toBe(200);
-    expect(moved.body).toEqual({ id: links.id, username: "links", dashboard: "guest-dash", enabled: true });
+    expect(moved.body).toEqual({ id: links.id, username: "links", dashboard: "guest-dash", enabled: true, disable_at: null, login_link: null });
     // there are no look settings
     expect((await a.call("PATCH", `guests/${links.id}`, { theme: { mode: "dark" } })).status).toBe(400);
     await ws.closed;

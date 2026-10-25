@@ -70,6 +70,10 @@ export interface Guest {
   username: string;
   dashboard: string;
   enabled: boolean;
+  /** When the guest is switched off automatically (ISO date), or null. */
+  disable_at: string | null;
+  /** Token of the guest's login link (`<guest address>/#login=<token>`), or null. */
+  login_link: string | null;
   /** Companion app logins of the guest. */
   devices?: GuestDevice[];
 }
@@ -133,10 +137,12 @@ export const api = {
     request<DashboardsView>("PATCH", `dashboards/${enc(id)}`, changes),
   removeDashboard: (id: string) => request<DashboardsView>("DELETE", `dashboards/${enc(id)}`),
   guests: () => request<Guest[]>("GET", "guests"),
-  createGuest: (guest: { username: string; password: string; dashboard: string; enabled?: boolean }) =>
+  createGuest: (guest: { username: string; password: string; dashboard: string; enabled?: boolean; disable_at?: string | null }) =>
     request<Guest>("POST", "guests", guest),
-  updateGuest: (id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }) =>
+  updateGuest: (id: string, changes: { password?: string; dashboard?: string; enabled?: boolean; disable_at?: string | null }) =>
     request<Guest>("PATCH", `guests/${enc(id)}`, changes),
+  createLoginLink: (id: string) => request<Guest>("POST", `guests/${enc(id)}/login-link`, {}),
+  removeLoginLink: (id: string) => request<Guest>("DELETE", `guests/${enc(id)}/login-link`),
   deleteGuest: (id: string) => request<{ ok: true }>("DELETE", `guests/${enc(id)}`),
   removeDevice: (guestId: string, deviceId: string) => request<Guest[]>("DELETE", `guests/${enc(guestId)}/devices/${enc(deviceId)}`),
   saveSettings: (settings: { public_url?: string; app_name?: string; companion?: { enabled?: boolean; discoverable?: boolean } }) =>

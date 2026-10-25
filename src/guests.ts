@@ -18,6 +18,10 @@ export interface Guest {
   dashboard: string;
   /** Inactive guests keep their account but cannot use it. */
   enabled: boolean;
+  /** When the guest is switched off automatically (ISO date), or null. */
+  disableAt: string | null;
+  /** Token of the guest's login link, or null without one. */
+  loginLink: string | null;
 }
 
 export class GuestError extends Error {}
@@ -30,16 +34,35 @@ interface UserRow {
   displayUsername?: string | null;
   dashboard?: string;
   enabled?: boolean | number | null;
+  disableAt?: Date | string | null;
+  loginLink?: string | null;
 }
 
-/** Accounts from before the field existed have no value and count as active. */
+/**
+ * Accounts from before the field existed have no value and count as active.
+ * Past its `disableAt` a guest counts as inactive right away, even before
+ * the runtime has switched it off (see Runtime.scheduleAutoDisable).
+ */
 export function isGuestEnabled(user: object): boolean {
-  const enabled = (user as { enabled?: unknown }).enabled;
-  return enabled !== false && enabled !== 0;
+  const { enabled, disableAt } = user as { enabled?: unknown; disableAt?: unknown };
+  if (enabled === false || enabled === 0) return false;
+  const at = disableAtTime(disableAt);
+  return at === null || at > Date.now();
+}
+
+function disableAtTime(value: unknown): number | null {
+  if (!(value instanceof Date) && typeof value !== "string" && typeof value !== "number") return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
 }
 
 function emailFor(username: string): string {
   return `${username.toLowerCase()}@guest-assistant.local`;
+}
+
+function toIso(value: unknown): string | null {
+  const time = disableAtTime(value);
+  return time === null ? null : new Date(time).toISOString();
 }
 
 function toGuest(u: UserRow): Guest {
@@ -48,6 +71,8 @@ function toGuest(u: UserRow): Guest {
     username: u.displayUsername || u.username || u.name,
     dashboard: u.dashboard ?? "",
     enabled: isGuestEnabled(u),
+    disableAt: toIso(u.disableAt),
+    loginLink: u.loginLink || null,
   };
 }
 
@@ -76,7 +101,7 @@ export class Guests {
     return user ? toGuest(user) : undefined;
   }
 
-  async create(input: { username: string; password: string; dashboard: string; enabled?: boolean }): Promise<Guest> {
+  async create(input: { username: string; password: string; dashboard: string; enabled?: boolean; disableAt?: Date | null }): Promise<Guest> {
     const username = Username.parse(input.username);
     const password = Password.parse(input.password);
     const { ctx, adapter } = await this.adapter();
@@ -90,6 +115,7 @@ export class Guests {
         displayUsername: username,
         dashboard: input.dashboard,
         enabled: input.enabled ?? true,
+        disableAt: input.disableAt ?? null,
       },
       { method: "admin" },
     );
@@ -102,8 +128,12 @@ export class Guests {
     return toGuest(created as unknown as UserRow);
   }
 
-  /** Returns the updated guest. Password, dashboard and deactivation end the guest's sessions. */
-  async update(id: string, changes: { password?: string; dashboard?: string; enabled?: boolean }): Promise<Guest> {
+  /**
+   * Returns the updated guest. Password, dashboard and deactivation end the
+   * guest's sessions. Switching a guest off also drops its `disableAt`: once
+   * switched back on, it stays on until the admin sets a new time.
+   */
+  async update(id: string, changes: { password?: string; dashboard?: string; enabled?: boolean; disableAt?: Date | null }): Promise<Guest> {
     const { ctx, adapter } = await this.adapter();
     const existing = (await adapter.findUserById(id)) as unknown as UserRow | null;
     if (!existing) throw new GuestError("Guest not found");
@@ -112,17 +142,39 @@ export class Guests {
       await adapter.updatePassword(id, await ctx.password.hash(Password.parse(changes.password)));
       endSessions = true;
     }
-    const fields: Record<string, string | boolean> = {};
+    const fields: Record<string, string | boolean | Date | null> = {};
     if (changes.dashboard !== undefined && changes.dashboard !== existing.dashboard) {
       fields.dashboard = changes.dashboard;
       endSessions = true;
     }
-    if (changes.enabled !== undefined && changes.enabled !== isGuestEnabled(existing)) {
+    if (changes.disableAt !== undefined) fields.disableAt = changes.disableAt;
+    if (changes.enabled === false && disableAtTime(existing.disableAt) !== null) {
+      fields.disableAt = null;
+    } else if (changes.enabled === true && changes.disableAt === undefined && (disableAtTime(existing.disableAt) ?? Infinity) <= Date.now()) {
+      // Switched back on after its time ran out: no longer limited.
+      fields.disableAt = null;
+    }
+    // Compared with the stored flag: a guest past its disableAt that is not
+    // switched off yet still gets switched off.
+    const storedEnabled = existing.enabled !== false && existing.enabled !== 0;
+    if (changes.enabled !== undefined && changes.enabled !== storedEnabled) {
       fields.enabled = changes.enabled;
       if (!changes.enabled) endSessions = true;
     }
     if (Object.keys(fields).length > 0) await adapter.updateUser(id, fields);
     if (endSessions) await adapter.deleteUserSessions(id);
+    return (await this.get(id))!;
+  }
+
+  /**
+   * Gives the guest a new login link, replacing the old one, or removes it
+   * (null). Sessions signed in with the old link stay; switch the guest off
+   * to end them.
+   */
+  async setLoginLink(id: string, token: string | null): Promise<Guest> {
+    const { adapter } = await this.adapter();
+    if (!(await adapter.findUserById(id))) throw new GuestError("Guest not found");
+    await adapter.updateUser(id, { loginLink: token });
     return (await this.get(id))!;
   }
 
