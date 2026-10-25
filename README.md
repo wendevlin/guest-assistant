@@ -193,6 +193,23 @@ Blocked actions are replaced by `action: none` in the config guests receive.
 When a dashboard edit in HA adds something new, it is blocked right away, and
 the admin gets a persistent notification in HA until they answer.
 
+### Login links and switching guests off
+
+On the Guests tab, each guest can get a **login link**
+(`<guest address>/#login=<token>`) that signs in without username and
+password. Turn it into a QR code with any QR tool if you like. Anyone with
+the link can use it as often as they like while the account is active. It
+stops working when you create a new one or remove it; guests already signed
+in stay signed in. While the account is switched off, the link signs nobody
+in, but works again once you switch the account back on. The token sits in
+the URL fragment, which browsers do not send to the server, so it does not
+show up in the logs of a reverse proxy.
+
+**Switch off automatically** takes a date and time. Then the account is
+switched off as if you had done it yourself: the guest is signed out, its
+connections end and the companion app loses access. Switching the account
+back on later keeps it on until you set a new time.
+
 ### Start-up settings
 
 A few settings are environment variables (Bun also reads a `.env` file, see
@@ -476,7 +493,7 @@ attributes are mapped to the components' `data-*` variants in `src/app.css`.
 ## Endpoints the frontend uses
 
 - Admin page: `/admin/` and its JSON API under `/admin/api/` (mutating calls need the header `x-guest-assistant: 1`)
-- `POST /api/auth/sign-in/username`, `GET /api/auth/get-session`, `POST /api/auth/sign-out` (the only better-auth endpoints that answer, each with exactly this method)
+- `POST /api/auth/sign-in/username`, `POST /api/auth/sign-in/link` (`{ token }` from a login link), `GET /api/auth/get-session`, `POST /api/auth/sign-out` (the only better-auth endpoints that answer, each with exactly this method)
 - `GET /api/auth/hass-token` → `{ access_token, refresh_token, expires_in, dashboard_url_path }`
 - `WS /api/websocket` (HA-compatible handshake with the hass-token)
 - `GET /api/states`, `/api/states/:entity_id`, `/api/camera_proxy/:entity_id`, `/api/camera_proxy_stream/:entity_id`, `/api/image_proxy/:entity_id`, `/api/media_player_proxy/:entity_id`, `/api/calendars/:entity_id`, `/api/history/period…`, `/api/logbook…`, `/api/hls/*`, `/api/image/serve/*`, `/api/brands/*`, `/api/tts_proxy/*`, `/api/map_tiles/*`

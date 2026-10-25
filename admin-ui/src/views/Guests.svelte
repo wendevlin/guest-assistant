@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Clock from "@lucide/svelte/icons/clock";
+  import Link from "@lucide/svelte/icons/link";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Smartphone from "@lucide/svelte/icons/smartphone";
   import X from "@lucide/svelte/icons/x";
@@ -13,16 +15,20 @@
   import * as Select from "$lib/components/ui/select";
   import { Switch } from "$lib/components/ui/switch";
   import * as Table from "$lib/components/ui/table";
-  import { api, generatePassword, type DashboardView, type Guest, type GuestDevice } from "$lib/api";
+  import { api, generatePassword, type DashboardView, type Guest, type GuestDevice, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
+
+  let { info }: { info: StateView } = $props();
 
   interface Draft {
     username: string;
     password: string;
     dashboard: string;
     enabled: boolean;
+    /** `datetime-local` value; empty for never. */
+    disableAt: string;
   }
 
   let guests = $state<Guest[] | null>(null);
@@ -34,11 +40,25 @@
   let dialogOpen = $state(false);
   let dialogError = $state<string | null>(null);
   let busy = $state(false);
-  let draft = $state<Draft>({ username: "", password: "", dashboard: "", enabled: true });
+  let draft = $state<Draft>({ username: "", password: "", dashboard: "", enabled: true, disableAt: "" });
   let deleting = $state<Guest | null>(null);
   let confirmOpen = $state(false);
 
   const titles = $derived(new Map(dashboards.map((d) => [d.id, d.title])));
+  /** Where guests open Guest Assistant; unknown as an app until the guest address is set. */
+  const guestBase = $derived(info.public_url ?? (info.mode === "standalone" ? window.location.origin : null));
+  const loginUrl = (token: string) => (guestBase ? `${guestBase}/#login=${token}` : null);
+  /** The guest whose link was copied last, for the "Copied" feedback. */
+  let copiedId = $state<string | null>(null);
+  /** Earliest time the picker offers (it cannot update itself). */
+  let minDisableAt = $state("");
+
+  /** ISO date → `datetime-local` value in the browser's time zone. */
+  function toLocalInput(iso: string | null): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  }
 
   async function load() {
     try {
@@ -54,7 +74,8 @@
     notice = null;
     dialogError = null;
     editing = null;
-    draft = { username: "", password: generatePassword(), dashboard: dashboards[0]?.id ?? "", enabled: true };
+    draft = { username: "", password: generatePassword(), dashboard: dashboards[0]?.id ?? "", enabled: true, disableAt: "" };
+    minDisableAt = toLocalInput(new Date().toISOString());
     dialogOpen = true;
   }
 
@@ -62,7 +83,8 @@
     notice = null;
     dialogError = null;
     editing = g;
-    draft = { username: g.username, password: "", dashboard: g.dashboard, enabled: g.enabled };
+    draft = { username: g.username, password: "", dashboard: g.dashboard, enabled: g.enabled, disableAt: toLocalInput(g.disable_at) };
+    minDisableAt = toLocalInput(new Date().toISOString());
     dialogOpen = true;
   }
 
@@ -71,14 +93,19 @@
     dialogError = null;
     busy = true;
     try {
+      // `datetime-local` values are local time, which Date parses them as.
+      const disableAt = draft.disableAt ? new Date(draft.disableAt).toISOString() : null;
       if (!editing) {
-        await api.createGuest({ ...draft });
+        const { disableAt: _, ...guest } = draft;
+        await api.createGuest({ ...guest, disable_at: disableAt });
         notice = `Guest ${draft.username} created. Password: ${draft.password}`;
       } else {
         await api.updateGuest(editing.id, {
           dashboard: draft.dashboard,
           enabled: draft.enabled,
           ...(draft.password ? { password: draft.password } : {}),
+          // Only when changed: an unchanged time may have passed while the dialog was open.
+          ...(draft.disableAt !== toLocalInput(editing.disable_at) ? { disable_at: disableAt } : {}),
         });
       }
       dialogOpen = false;
@@ -97,6 +124,31 @@
       await load();
     } catch (err) {
       error = message(err);
+    }
+  }
+
+  /** Creates a new login link (the old one stops working) or removes it. */
+  async function setLoginLink(g: Guest, create: boolean) {
+    dialogError = null;
+    try {
+      const updated = await (create ? api.createLoginLink(g.id) : api.removeLoginLink(g.id));
+      editing = { ...g, login_link: updated.login_link };
+      await load();
+    } catch (err) {
+      dialogError = message(err);
+    }
+  }
+
+  async function copyLink(g: Guest) {
+    const url = g.login_link && loginUrl(g.login_link);
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      copiedId = g.id;
+      setTimeout(() => (copiedId = null), 2500);
+    } catch {
+      // clipboard not available (http): the dialog shows the link to copy by hand
+      if (!dialogOpen) startEdit(g);
     }
   }
 
@@ -136,7 +188,8 @@
   <div class="grid gap-4">
     <div class="flex flex-wrap items-center justify-between gap-4">
       <p class="text-sm text-muted-foreground">
-        Guests sign in with these accounts. Each account belongs to one dashboard. Switch an account off while the guest is not visiting.
+        Guests sign in with these accounts or with a login link. Each account belongs to one dashboard. Switch an account off while the guest
+        is not visiting, or let it switch off at a set time.
       </p>
       {#if dashboards.length > 0}
         <Button onclick={startNew}><Plus class="size-4" />Add guest</Button>
@@ -171,6 +224,12 @@
                 <Table.Row class={g.enabled ? "" : "text-muted-foreground"}>
                   <Table.Cell class="font-medium">
                     {g.username}
+                    {#if g.disable_at}
+                      <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
+                        <Clock class="size-3.5 shrink-0" />
+                        <span>Switches off {lastUsed(g.disable_at)}</span>
+                      </div>
+                    {/if}
                     {#each g.devices ?? [] as d (d.id)}
                       <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
                         <Smartphone class="size-3.5 shrink-0" />
@@ -191,6 +250,15 @@
                     <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />
                   </Table.Cell>
                   <Table.Cell class="text-right whitespace-nowrap">
+                    {#if g.login_link && guestBase}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Copy login link"
+                        title={copiedId === g.id ? "Copied" : "Copy login link"}
+                        onclick={() => copyLink(g)}><Link class="size-4" /></Button
+                      >
+                    {/if}
                     <Button variant="ghost" size="icon" aria-label="Edit" onclick={() => startEdit(g)}><Pencil class="size-4" /></Button>
                     <Button
                       variant="ghost"
@@ -248,6 +316,49 @@
         <Switch id="guest-enabled" bind:checked={draft.enabled} />
         <Label for="guest-enabled" class="font-normal">Active</Label>
       </div>
+      <div class="grid gap-2">
+        <Label for="guest-disable-at">Switch off automatically</Label>
+        <div class="flex gap-2">
+          <Input id="guest-disable-at" type="datetime-local" bind:value={draft.disableAt} min={minDisableAt} />
+          {#if draft.disableAt}
+            <Button type="button" variant="outline" onclick={() => (draft.disableAt = "")}>Clear</Button>
+          {/if}
+        </div>
+        <p class="text-xs text-muted-foreground">
+          At this time the account is switched off and the guest is signed out. Leave empty to keep it on.
+        </p>
+      </div>
+      {#if editing}
+        <div class="grid gap-2">
+          <Label for="guest-login-link">Login link</Label>
+          {#if editing.login_link}
+            {@const url = loginUrl(editing.login_link)}
+            {#if url}
+              <div class="flex gap-2">
+                <Input id="guest-login-link" value={url} readonly onfocus={(e) => e.currentTarget.select()} />
+                <Button type="button" variant="outline" onclick={() => editing && copyLink(editing)}>
+                  {copiedId === editing.id ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            {:else}
+              <p class="text-sm text-muted-foreground">Set the guest address in the settings to get the link.</p>
+            {/if}
+            <div class="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onclick={() => editing && setLoginLink(editing, true)}>New link</Button>
+              <Button type="button" variant="outline" size="sm" onclick={() => editing && setLoginLink(editing, false)}>Remove link</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Anyone with the link signs in as this guest, as often as they like, while the account is active. A new link or removing it
+              makes the old one stop working; guests already signed in stay signed in until you switch the account off.
+            </p>
+          {:else}
+            <div>
+              <Button type="button" variant="outline" size="sm" onclick={() => editing && setLoginLink(editing, true)}>Create login link</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">Lets the guest sign in without a username and password.</p>
+          {/if}
+        </div>
+      {/if}
     </form>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (dialogOpen = false)}>Cancel</Button>

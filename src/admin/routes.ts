@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import z from "zod";
 import type { Dashboard } from "../dashboard";
 import { effectiveAnswer, isAnswered } from "../dashboard/interactions";
-import { GuestError, Password, Username } from "../guests";
+import { GuestError, Password, Username, type Guest } from "../guests";
 import { HaClient } from "../ha/client";
 import { discoverHomeAssistant } from "../ha/discovery";
 import { normalizeHaUrl } from "../ha/endpoint";
@@ -42,8 +42,24 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
 const Answers = z.record(z.string().max(2000), z.string().max(50));
 const DashboardInput = z.strictObject({ id: z.string().min(1).max(200), answers: Answers.optional() });
 const DashboardPatch = z.strictObject({ answers: Answers.optional(), enabled: z.boolean().optional(), widgets: z.boolean().optional() });
-const GuestInput = z.strictObject({ username: Username, password: Password, dashboard: z.string().min(1), enabled: z.boolean().optional() });
-const GuestPatch = z.strictObject({ password: Password.optional(), dashboard: z.string().min(1).optional(), enabled: z.boolean().optional() });
+/** When the guest is switched off automatically; null for never. */
+const DisableAt = z.iso
+  .datetime({ offset: true })
+  .transform((v) => new Date(v))
+  .nullable();
+const GuestInput = z.strictObject({
+  username: Username,
+  password: Password,
+  dashboard: z.string().min(1),
+  enabled: z.boolean().optional(),
+  disable_at: DisableAt.optional(),
+});
+const GuestPatch = z.strictObject({
+  password: Password.optional(),
+  dashboard: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  disable_at: DisableAt.optional(),
+});
 const SettingsInput = z.strictObject({
   public_url: z.union([z.url({ protocol: /^https?$/ }), z.literal("")]).optional(),
   // Shown under the icon of the installed app; empty for the build's own name.
@@ -144,11 +160,15 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
     };
   }
 
+  function guestView({ disableAt, loginLink, ...g }: Guest) {
+    return { ...g, disable_at: disableAt, login_link: loginLink };
+  }
+
   /** Guests with their companion app logins. */
   async function guestsView() {
     const guests = await runtime.guests.list();
     return guests.map((g) => ({
-      ...g,
+      ...guestView(g),
       devices: runtime.appTokens.listForUser(g.id).map((row) => ({
         id: row.id,
         name: row.device?.device_name ?? null,
@@ -333,8 +353,8 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       case "GET guests":
         return json(await guestsView());
       case "POST guests": {
-        const input = await body(req, GuestInput);
-        return json(await runtime.createGuest(input), 201);
+        const { disable_at, ...input } = await body(req, GuestInput);
+        return json(guestView(await runtime.createGuest({ ...input, disableAt: disable_at })), 201);
       }
       case "PUT settings": {
         const { public_url, app_name, companion } = await body(req, SettingsInput);
@@ -370,10 +390,19 @@ export function createAdmin(runtime: Runtime, sessions: AdminSessions, { base }:
       runtime.endAppSession(row.id);
       return json(await guestsView());
     }
+    const link = path.match(/^guests\/([^/]+)\/login-link$/);
+    if (link) {
+      const id = decodeURIComponent(link[1]!);
+      if (method === "POST") return json(guestView(await runtime.createLoginLink(id)));
+      if (method === "DELETE") return json(guestView(await runtime.removeLoginLink(id)));
+    }
     const guest = path.match(/^guests\/([^/]+)$/);
     if (guest) {
       const id = decodeURIComponent(guest[1]!);
-      if (method === "PATCH") return json(await runtime.updateGuest(id, await body(req, GuestPatch)));
+      if (method === "PATCH") {
+        const { disable_at, ...changes } = await body(req, GuestPatch);
+        return json(guestView(await runtime.updateGuest(id, { ...changes, disableAt: disable_at })));
+      }
       if (method === "DELETE") {
         await runtime.deleteGuest(id);
         return json({ ok: true });

@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { username } from "better-auth/plugins";
 import type { Database } from "bun:sqlite";
+import { loginLink } from "./login-link";
 
 /**
  * The better-auth endpoints the guest frontend uses (guest-api.ts there),
@@ -10,6 +11,7 @@ import type { Database } from "bun:sqlite";
  */
 export const ALLOWED_AUTH_ENDPOINTS: ReadonlyMap<string, string> = new Map([
   ["/sign-in/username", "POST"],
+  ["/sign-in/link", "POST"],
   ["/sign-out", "POST"],
   ["/get-session", "GET"],
 ]);
@@ -91,7 +93,7 @@ export function createAuth({ db, publicUrl, port, secret }: AuthOptions) {
       enabled: true,
       disableSignUp: true,
     },
-    plugins: [username()],
+    plugins: [username(), loginLink()],
     disabledPaths: DISABLED_AUTH_PATHS,
     session: {
       expiresIn: 60 * 60 * 24 * 7,
@@ -103,6 +105,7 @@ export function createAuth({ db, publicUrl, port, secret }: AuthOptions) {
       max: 120,
       customRules: {
         "/sign-in/username": { window: 60, max: 10 },
+        "/sign-in/link": { window: 60, max: 10 },
       },
     },
     advanced: {
@@ -127,6 +130,23 @@ export function createAuth({ db, publicUrl, port, secret }: AuthOptions) {
           required: false,
           defaultValue: true,
           input: false,
+        },
+        /** The guest is switched off at this time (see Runtime.scheduleAutoDisable). */
+        disableAt: {
+          type: "date",
+          required: false,
+          input: false,
+        },
+        /**
+         * Token of the guest's login link (auth/login-link.ts). Kept as is,
+         * not hashed: the admin copies the link again whenever needed, and
+         * the same database holds the session tokens and the cookie secret.
+         */
+        loginLink: {
+          type: "string",
+          required: false,
+          input: false,
+          returned: false,
         },
       },
     },
