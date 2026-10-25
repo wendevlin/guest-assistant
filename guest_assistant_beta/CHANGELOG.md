@@ -3,6 +3,14 @@
 ## 0.9.0-beta.4
 
 - The guest page is built on the Home Assistant 2026.10.1 frontend.
+- Guests can get a login link on the Guests tab: it signs them in without
+  username and password, as often as needed, while the account is active.
+  "New link" or "Remove link" stops the old one. Turn it into a QR code with
+  any QR tool. The guest page needs a frontend build from after this version
+  to use the link; until then it shows the normal login.
+- "Switch off automatically" on a guest switches the account off at a date
+  and time you pick, for example after a babysitting evening. The guest is
+  signed out right then.
 
 ## 0.9.0-beta.3
 
