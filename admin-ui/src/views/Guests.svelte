@@ -9,7 +9,6 @@
   import Plus from "@lucide/svelte/icons/plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import * as Alert from "$lib/components/ui/alert";
-  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
   import * as Dialog from "$lib/components/ui/dialog";
@@ -171,7 +170,6 @@
   }
 
   const lastUsed = (iso: string) => new Date(iso).toLocaleString();
-  const shortDate = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 
   async function remove(g: Guest) {
     try {
@@ -225,22 +223,21 @@
             <div class="flex items-center gap-3 pe-5">
               <button
                 type="button"
-                class="flex min-w-0 flex-1 flex-wrap items-center gap-3 py-4 ps-5 text-left"
+                class="flex min-w-0 flex-1 items-center gap-3 py-4 ps-5 text-left"
                 aria-expanded={isOpen}
                 onclick={() => (open = isOpen ? null : g.id)}
               >
                 <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen ? 'rotate-90' : ''}" />
                 <span class="grid min-w-0 flex-1">
-                  <span class="truncate font-medium {g.enabled ? '' : 'text-muted-foreground'}">{g.username}</span>
+                  <span class="flex min-w-0 items-center gap-2">
+                    <span class="truncate font-medium {g.enabled ? '' : 'text-muted-foreground'}">{g.username}</span>
+                    <!-- The details below say more; these only show that there is something. -->
+                    {#if g.disable_at}<Clock class="size-3.5 shrink-0 text-muted-foreground" aria-label="Switches off automatically" />{/if}
+                    {#if g.login_link}<Link class="size-3.5 shrink-0 text-muted-foreground" aria-label="Has a login link" />{/if}
+                    {#if g.devices?.length}<Smartphone class="size-3.5 shrink-0 text-muted-foreground" aria-label="Uses the companion app" />{/if}
+                  </span>
                   <span class="truncate text-sm text-muted-foreground">{titles.get(g.dashboard) ?? g.dashboard}</span>
                 </span>
-                {#if g.disable_at || g.login_link || g.devices?.length}
-                  <span class="flex w-full flex-wrap gap-1.5 ps-7">
-                    {#if g.disable_at}<Badge variant="secondary">Off at {shortDate(g.disable_at)}</Badge>{/if}
-                    {#if g.login_link}<Badge variant="secondary">Login link</Badge>{/if}
-                    {#if g.devices?.length}<Badge variant="secondary">Apps: {g.devices.length}</Badge>{/if}
-                  </span>
-                {/if}
               </button>
               <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />
             </div>
