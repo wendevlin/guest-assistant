@@ -5,7 +5,6 @@
   import Link from "@lucide/svelte/icons/link";
   import Pencil from "@lucide/svelte/icons/pencil";
   import Smartphone from "@lucide/svelte/icons/smartphone";
-  import X from "@lucide/svelte/icons/x";
   import Plus from "@lucide/svelte/icons/plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import * as Alert from "$lib/components/ui/alert";
@@ -23,6 +22,7 @@
   import { copyText } from "$lib/utils";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
+  import GuestDevices from "./GuestDevices.svelte";
 
   let { info }: { info: StateView } = $props();
 
@@ -46,6 +46,10 @@
   let busy = $state(false);
   let draft = $state<Draft>({ username: "", password: "", dashboard: "", enabled: true, disableAt: "" });
   let deleting = $state<Guest | null>(null);
+  /** The guest whose companion apps are shown; looked up again after a sign-out. */
+  let devicesId = $state<string | null>(null);
+  let devicesOpen = $state(false);
+  const devicesGuest = $derived(guests?.find((g) => g.id === devicesId) ?? null);
   /** The guest expanded in the phone list. */
   let open = $state<string | null>(null);
   let confirmOpen = $state(false);
@@ -159,14 +163,14 @@
     }
   }
 
-  /** Signs one device out of the companion app. */
-  async function removeDevice(g: Guest, d: GuestDevice) {
-    error = null;
-    try {
-      guests = await api.removeDevice(g.id, d.id);
-    } catch (err) {
-      error = message(err);
-    }
+  /** Signs one device out of the companion app; errors are shown by GuestDevices. */
+  async function signOutDevice(g: Guest, d: GuestDevice) {
+    guests = await api.removeDevice(g.id, d.id);
+  }
+
+  function showDevices(g: Guest) {
+    devicesId = g.id;
+    devicesOpen = true;
   }
 
   const lastUsed = (iso: string) => new Date(iso).toLocaleString();
@@ -250,24 +254,16 @@
                     <span>Switches off {lastUsed(g.disable_at)}</span>
                   </div>
                 {/if}
-                {#each g.devices ?? [] as d (d.id)}
-                  <div class="flex items-center gap-2 text-muted-foreground">
-                    <Smartphone class="size-4 shrink-0" />
-                    <span class="min-w-0 flex-1 break-words" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      class="size-8"
-                      aria-label="Sign this device out of the companion app"
-                      onclick={() => removeDevice(g, d)}><X class="size-4" /></Button
-                    >
-                  </div>
-                {/each}
                 <div class="flex flex-wrap gap-2">
                   {#if g.login_link && guestBase}
                     <Button variant="outline" size="sm" onclick={() => copyLink(g)}>
                       {#if copiedId === g.id}<Check class="size-4 text-success" />Copied{:else}<Link class="size-4" />Copy login link{/if}
                     </Button>
+                  {/if}
+                  {#if g.devices?.length}
+                    <Button variant="outline" size="sm" onclick={() => showDevices(g)}
+                      ><Smartphone class="size-4" />Companion apps ({g.devices.length})</Button
+                    >
                   {/if}
                   <Button variant="outline" size="sm" onclick={() => startEdit(g)}><Pencil class="size-4" />Edit</Button>
                   <Button
@@ -304,20 +300,16 @@
                         <span>Switches off {lastUsed(g.disable_at)}</span>
                       </div>
                     {/if}
-                    {#each g.devices ?? [] as d (d.id)}
-                      <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
+                    {#if g.devices?.length}
+                      <button
+                        type="button"
+                        class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        onclick={() => showDevices(g)}
+                      >
                         <Smartphone class="size-3.5 shrink-0" />
-                        <span class="truncate" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          class="size-6"
-                          aria-label="Sign this device out of the companion app"
-                          title="Sign out of the companion app"
-                          onclick={() => removeDevice(g, d)}><X class="size-3.5" /></Button
-                        >
-                      </div>
-                    {/each}
+                        {g.devices.length === 1 ? "1 companion app" : `${g.devices.length} companion apps`}
+                      </button>
+                    {/if}
                   </Table.Cell>
                   <Table.Cell>{titles.get(g.dashboard) ?? g.dashboard}</Table.Cell>
                   <Table.Cell>
@@ -441,6 +433,8 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
+
+<GuestDevices bind:open={devicesOpen} guest={devicesGuest} onsignout={signOutDevice} />
 
 <ConfirmDialog
   bind:open={confirmOpen}

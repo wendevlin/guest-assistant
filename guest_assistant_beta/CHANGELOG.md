@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0-beta.4
+
+- A guest's companion app logins have their own view on the Guests tab
+  ("Companion apps"), with the app version and when each device signed in.
+  "Sign out" asks first and says what happens: the app on that device has
+  to sign in again, the guest account stays.
+
 ## 0.10.0-beta.3
 
 - On a phone the Guests tab of the admin page is a list like the Dashboards
