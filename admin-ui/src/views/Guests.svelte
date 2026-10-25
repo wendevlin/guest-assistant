@@ -214,7 +214,7 @@
             <Table.Header>
               <Table.Row>
                 <Table.Head>Username</Table.Head>
-                <Table.Head>Dashboard</Table.Head>
+                <Table.Head class="hidden sm:table-cell">Dashboard</Table.Head>
                 <Table.Head class="w-0">Active</Table.Head>
                 <Table.Head class="w-0"><span class="sr-only">Edit</span></Table.Head>
               </Table.Row>
@@ -222,8 +222,10 @@
             <Table.Body>
               {#each guests as g (g.id)}
                 <Table.Row class={g.enabled ? "" : "text-muted-foreground"}>
-                  <Table.Cell class="font-medium">
+                  <!-- Wraps instead of widening the table on phones. -->
+                  <Table.Cell class="font-medium whitespace-normal">
                     {g.username}
+                    <div class="text-xs font-normal text-muted-foreground sm:hidden">{titles.get(g.dashboard) ?? g.dashboard}</div>
                     {#if g.disable_at}
                       <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
                         <Clock class="size-3.5 shrink-0" />
@@ -233,7 +235,7 @@
                     {#each g.devices ?? [] as d (d.id)}
                       <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
                         <Smartphone class="size-3.5 shrink-0" />
-                        <span class="truncate" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
+                        <span class="break-words" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -245,7 +247,7 @@
                       </div>
                     {/each}
                   </Table.Cell>
-                  <Table.Cell>{titles.get(g.dashboard) ?? g.dashboard}</Table.Cell>
+                  <Table.Cell class="hidden sm:table-cell">{titles.get(g.dashboard) ?? g.dashboard}</Table.Cell>
                   <Table.Cell>
                     <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />
                   </Table.Cell>
