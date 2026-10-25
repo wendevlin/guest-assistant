@@ -4,6 +4,8 @@
 
 - The Guests tab of the admin page works on a phone in portrait: the
   dashboard moves under the username, so the switch and the buttons fit.
+- Copying a login link works when the admin page is opened over plain http,
+  and the link button shows a check mark once the link is copied.
 
 ## 0.10.0-beta.2
 

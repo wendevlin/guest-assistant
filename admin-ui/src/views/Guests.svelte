@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Check from "@lucide/svelte/icons/check";
   import Clock from "@lucide/svelte/icons/clock";
   import Link from "@lucide/svelte/icons/link";
   import Pencil from "@lucide/svelte/icons/pencil";
@@ -17,6 +18,7 @@
   import * as Table from "$lib/components/ui/table";
   import { api, generatePassword, type DashboardView, type Guest, type GuestDevice, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
+  import { copyText } from "$lib/utils";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
 
@@ -142,13 +144,14 @@
   async function copyLink(g: Guest) {
     const url = g.login_link && loginUrl(g.login_link);
     if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
+    if (await copyText(url)) {
       copiedId = g.id;
       setTimeout(() => (copiedId = null), 2500);
-    } catch {
-      // clipboard not available (http): the dialog shows the link to copy by hand
-      if (!dialogOpen) startEdit(g);
+    } else if (!dialogOpen) {
+      // The dialog shows the link to copy by hand.
+      startEdit(g);
+    } else {
+      dialogError = "The browser did not allow copying. Select the link and copy it by hand.";
     }
   }
 
@@ -258,7 +261,8 @@
                         size="icon"
                         aria-label="Copy login link"
                         title={copiedId === g.id ? "Copied" : "Copy login link"}
-                        onclick={() => copyLink(g)}><Link class="size-4" /></Button
+                        onclick={() => copyLink(g)}
+                        >{#if copiedId === g.id}<Check class="size-4 text-success" />{:else}<Link class="size-4" />{/if}</Button
                       >
                     {/if}
                     <Button variant="ghost" size="icon" aria-label="Edit" onclick={() => startEdit(g)}><Pencil class="size-4" /></Button>
