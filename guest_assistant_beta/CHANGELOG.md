@@ -2,8 +2,8 @@
 
 ## 0.10.0-beta.3
 
-- The Guests tab of the admin page works on a phone in portrait: the
-  dashboard moves under the username, so the switch and the buttons fit.
+- On a phone the Guests tab of the admin page is a list like the Dashboards
+  tab: tap a guest to see its details and buttons.
 - Copying a login link works when the admin page is opened over plain http,
   and the link button shows a check mark once the link is copied.
 

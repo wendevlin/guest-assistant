@@ -1,5 +1,6 @@
 <script lang="ts">
   import Check from "@lucide/svelte/icons/check";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Clock from "@lucide/svelte/icons/clock";
   import Link from "@lucide/svelte/icons/link";
   import Pencil from "@lucide/svelte/icons/pencil";
@@ -8,12 +9,14 @@
   import Plus from "@lucide/svelte/icons/plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import * as Alert from "$lib/components/ui/alert";
+  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import * as Card from "$lib/components/ui/card";
   import * as Dialog from "$lib/components/ui/dialog";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import * as Select from "$lib/components/ui/select";
+  import { Separator } from "$lib/components/ui/separator";
   import { Switch } from "$lib/components/ui/switch";
   import * as Table from "$lib/components/ui/table";
   import { api, generatePassword, type DashboardView, type Guest, type GuestDevice, type StateView } from "$lib/api";
@@ -44,6 +47,8 @@
   let busy = $state(false);
   let draft = $state<Draft>({ username: "", password: "", dashboard: "", enabled: true, disableAt: "" });
   let deleting = $state<Guest | null>(null);
+  /** The guest expanded in the phone list. */
+  let open = $state<string | null>(null);
   let confirmOpen = $state(false);
 
   const titles = $derived(new Map(dashboards.map((d) => [d.id, d.title])));
@@ -166,6 +171,7 @@
   }
 
   const lastUsed = (iso: string) => new Date(iso).toLocaleString();
+  const shortDate = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 
   async function remove(g: Guest) {
     try {
@@ -211,13 +217,81 @@
     {#if guests.length === 0}
       <p class="text-sm text-muted-foreground">No guests yet.</p>
     {:else}
-      <Card.Root class="py-2">
+      <!-- Phones get a list like the Dashboards tab; the table does not fit. -->
+      <div class="grid gap-3 sm:hidden">
+        {#each guests as g (g.id)}
+          {@const isOpen = open === g.id}
+          <Card.Root class="gap-0 py-0">
+            <div class="flex items-center gap-3 pe-5">
+              <button
+                type="button"
+                class="flex min-w-0 flex-1 flex-wrap items-center gap-3 py-4 ps-5 text-left"
+                aria-expanded={isOpen}
+                onclick={() => (open = isOpen ? null : g.id)}
+              >
+                <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen ? 'rotate-90' : ''}" />
+                <span class="grid min-w-0 flex-1">
+                  <span class="truncate font-medium {g.enabled ? '' : 'text-muted-foreground'}">{g.username}</span>
+                  <span class="truncate text-sm text-muted-foreground">{titles.get(g.dashboard) ?? g.dashboard}</span>
+                </span>
+                {#if g.disable_at || g.login_link || g.devices?.length}
+                  <span class="flex w-full flex-wrap gap-1.5 ps-7">
+                    {#if g.disable_at}<Badge variant="secondary">Off at {shortDate(g.disable_at)}</Badge>{/if}
+                    {#if g.login_link}<Badge variant="secondary">Login link</Badge>{/if}
+                    {#if g.devices?.length}<Badge variant="secondary">Apps: {g.devices.length}</Badge>{/if}
+                  </span>
+                {/if}
+              </button>
+              <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />
+            </div>
+            {#if isOpen}
+              <Separator />
+              <div class="grid gap-4 px-5 py-4 text-sm">
+                {#if g.disable_at}
+                  <div class="flex items-center gap-2 text-muted-foreground">
+                    <Clock class="size-4 shrink-0" />
+                    <span>Switches off {lastUsed(g.disable_at)}</span>
+                  </div>
+                {/if}
+                {#each g.devices ?? [] as d (d.id)}
+                  <div class="flex items-center gap-2 text-muted-foreground">
+                    <Smartphone class="size-4 shrink-0" />
+                    <span class="min-w-0 flex-1 break-words" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="size-8"
+                      aria-label="Sign this device out of the companion app"
+                      onclick={() => removeDevice(g, d)}><X class="size-4" /></Button
+                    >
+                  </div>
+                {/each}
+                <div class="flex flex-wrap gap-2">
+                  {#if g.login_link && guestBase}
+                    <Button variant="outline" size="sm" onclick={() => copyLink(g)}>
+                      {#if copiedId === g.id}<Check class="size-4 text-success" />Copied{:else}<Link class="size-4" />Copy login link{/if}
+                    </Button>
+                  {/if}
+                  <Button variant="outline" size="sm" onclick={() => startEdit(g)}><Pencil class="size-4" />Edit</Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="text-destructive hover:text-destructive"
+                    onclick={() => ((deleting = g), (confirmOpen = true))}><Trash2 class="size-4" />Delete</Button
+                  >
+                </div>
+              </div>
+            {/if}
+          </Card.Root>
+        {/each}
+      </div>
+      <Card.Root class="hidden py-2 sm:flex">
         <Card.Content class="px-2">
           <Table.Root>
             <Table.Header>
               <Table.Row>
                 <Table.Head>Username</Table.Head>
-                <Table.Head class="hidden sm:table-cell">Dashboard</Table.Head>
+                <Table.Head>Dashboard</Table.Head>
                 <Table.Head class="w-0">Active</Table.Head>
                 <Table.Head class="w-0"><span class="sr-only">Edit</span></Table.Head>
               </Table.Row>
@@ -225,10 +299,8 @@
             <Table.Body>
               {#each guests as g (g.id)}
                 <Table.Row class={g.enabled ? "" : "text-muted-foreground"}>
-                  <!-- Wraps instead of widening the table on phones. -->
-                  <Table.Cell class="font-medium whitespace-normal">
+                  <Table.Cell class="font-medium">
                     {g.username}
-                    <div class="text-xs font-normal text-muted-foreground sm:hidden">{titles.get(g.dashboard) ?? g.dashboard}</div>
                     {#if g.disable_at}
                       <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
                         <Clock class="size-3.5 shrink-0" />
@@ -238,7 +310,7 @@
                     {#each g.devices ?? [] as d (d.id)}
                       <div class="mt-1 flex items-center gap-2 text-xs font-normal text-muted-foreground">
                         <Smartphone class="size-3.5 shrink-0" />
-                        <span class="break-words" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
+                        <span class="truncate" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -250,7 +322,7 @@
                       </div>
                     {/each}
                   </Table.Cell>
-                  <Table.Cell class="hidden sm:table-cell">{titles.get(g.dashboard) ?? g.dashboard}</Table.Cell>
+                  <Table.Cell>{titles.get(g.dashboard) ?? g.dashboard}</Table.Cell>
                   <Table.Cell>
                     <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />
                   </Table.Cell>
