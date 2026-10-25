@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Check from "@lucide/svelte/icons/check";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import Clock from "@lucide/svelte/icons/clock";
   import Link from "@lucide/svelte/icons/link";
   import Pencil from "@lucide/svelte/icons/pencil";
@@ -13,10 +15,12 @@
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
   import * as Select from "$lib/components/ui/select";
+  import { Separator } from "$lib/components/ui/separator";
   import { Switch } from "$lib/components/ui/switch";
   import * as Table from "$lib/components/ui/table";
   import { api, generatePassword, type DashboardView, type Guest, type GuestDevice, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
+  import { copyText } from "$lib/utils";
   import ConfirmDialog from "$lib/widgets/ConfirmDialog.svelte";
   import Spinner from "$lib/widgets/Spinner.svelte";
 
@@ -42,6 +46,8 @@
   let busy = $state(false);
   let draft = $state<Draft>({ username: "", password: "", dashboard: "", enabled: true, disableAt: "" });
   let deleting = $state<Guest | null>(null);
+  /** The guest expanded in the phone list. */
+  let open = $state<string | null>(null);
   let confirmOpen = $state(false);
 
   const titles = $derived(new Map(dashboards.map((d) => [d.id, d.title])));
@@ -142,13 +148,14 @@
   async function copyLink(g: Guest) {
     const url = g.login_link && loginUrl(g.login_link);
     if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
+    if (await copyText(url)) {
       copiedId = g.id;
       setTimeout(() => (copiedId = null), 2500);
-    } catch {
-      // clipboard not available (http): the dialog shows the link to copy by hand
-      if (!dialogOpen) startEdit(g);
+    } else if (!dialogOpen) {
+      // The dialog shows the link to copy by hand.
+      startEdit(g);
+    } else {
+      dialogError = "The browser did not allow copying. Select the link and copy it by hand.";
     }
   }
 
@@ -208,7 +215,74 @@
     {#if guests.length === 0}
       <p class="text-sm text-muted-foreground">No guests yet.</p>
     {:else}
-      <Card.Root class="py-2">
+      <!-- Phones get a list like the Dashboards tab; the table does not fit. -->
+      <div class="grid gap-3 sm:hidden">
+        {#each guests as g (g.id)}
+          {@const isOpen = open === g.id}
+          <Card.Root class="gap-0 py-0">
+            <div class="flex items-center gap-3 pe-5">
+              <button
+                type="button"
+                class="flex min-w-0 flex-1 items-center gap-3 py-4 ps-5 text-left"
+                aria-expanded={isOpen}
+                onclick={() => (open = isOpen ? null : g.id)}
+              >
+                <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen ? 'rotate-90' : ''}" />
+                <span class="grid min-w-0 flex-1">
+                  <span class="flex min-w-0 items-center gap-2">
+                    <span class="truncate font-medium {g.enabled ? '' : 'text-muted-foreground'}">{g.username}</span>
+                    <!-- The details below say more; these only show that there is something. -->
+                    {#if g.disable_at}<Clock class="size-3.5 shrink-0 text-muted-foreground" aria-label="Switches off automatically" />{/if}
+                    {#if g.login_link}<Link class="size-3.5 shrink-0 text-muted-foreground" aria-label="Has a login link" />{/if}
+                    {#if g.devices?.length}<Smartphone class="size-3.5 shrink-0 text-muted-foreground" aria-label="Uses the companion app" />{/if}
+                  </span>
+                  <span class="truncate text-sm text-muted-foreground">{titles.get(g.dashboard) ?? g.dashboard}</span>
+                </span>
+              </button>
+              <Switch checked={g.enabled} onCheckedChange={(enabled) => setEnabled(g, enabled)} aria-label="Active" />
+            </div>
+            {#if isOpen}
+              <Separator />
+              <div class="grid gap-4 px-5 py-4 text-sm">
+                {#if g.disable_at}
+                  <div class="flex items-center gap-2 text-muted-foreground">
+                    <Clock class="size-4 shrink-0" />
+                    <span>Switches off {lastUsed(g.disable_at)}</span>
+                  </div>
+                {/if}
+                {#each g.devices ?? [] as d (d.id)}
+                  <div class="flex items-center gap-2 text-muted-foreground">
+                    <Smartphone class="size-4 shrink-0" />
+                    <span class="min-w-0 flex-1 break-words" title={d.app ?? ""}>{d.name ?? "Companion app"} · last used {lastUsed(d.last_used_at)}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="size-8"
+                      aria-label="Sign this device out of the companion app"
+                      onclick={() => removeDevice(g, d)}><X class="size-4" /></Button
+                    >
+                  </div>
+                {/each}
+                <div class="flex flex-wrap gap-2">
+                  {#if g.login_link && guestBase}
+                    <Button variant="outline" size="sm" onclick={() => copyLink(g)}>
+                      {#if copiedId === g.id}<Check class="size-4 text-success" />Copied{:else}<Link class="size-4" />Copy login link{/if}
+                    </Button>
+                  {/if}
+                  <Button variant="outline" size="sm" onclick={() => startEdit(g)}><Pencil class="size-4" />Edit</Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="text-destructive hover:text-destructive"
+                    onclick={() => ((deleting = g), (confirmOpen = true))}><Trash2 class="size-4" />Delete</Button
+                  >
+                </div>
+              </div>
+            {/if}
+          </Card.Root>
+        {/each}
+      </div>
+      <Card.Root class="hidden py-2 sm:flex">
         <Card.Content class="px-2">
           <Table.Root>
             <Table.Header>
@@ -256,7 +330,8 @@
                         size="icon"
                         aria-label="Copy login link"
                         title={copiedId === g.id ? "Copied" : "Copy login link"}
-                        onclick={() => copyLink(g)}><Link class="size-4" /></Button
+                        onclick={() => copyLink(g)}
+                        >{#if copiedId === g.id}<Check class="size-4 text-success" />{:else}<Link class="size-4" />{/if}</Button
                       >
                     {/if}
                     <Button variant="ghost" size="icon" aria-label="Edit" onclick={() => startEdit(g)}><Pencil class="size-4" /></Button>

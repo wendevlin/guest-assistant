@@ -7,6 +7,7 @@
   import { Switch } from "$lib/components/ui/switch";
   import { api, type StateView } from "$lib/api";
   import { message } from "$lib/errors";
+  import { copyText } from "$lib/utils";
   import Connect from "./Connect.svelte";
 
   let { info, onstate }: { info: StateView; onstate: (s: StateView) => void } = $props();
@@ -36,12 +37,10 @@
 
   async function copyInvite() {
     if (!inviteLink) return;
-    try {
-      await navigator.clipboard.writeText(inviteLink);
+    // If copying is not allowed, the link is shown to copy by hand.
+    if (await copyText(inviteLink)) {
       copied = true;
       setTimeout(() => (copied = false), 2500);
-    } catch {
-      // clipboard not available (http): the link is shown to copy by hand
     }
   }
 

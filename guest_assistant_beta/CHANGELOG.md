@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0-beta.3
+
+- On a phone the Guests tab of the admin page is a list like the Dashboards
+  tab: tap a guest to see its details and buttons.
+- Copying a login link works when the admin page is opened over plain http,
+  and the link button shows a check mark once the link is copied.
+
 ## 0.10.0-beta.2
 
 - The guest page is built on the Home Assistant 2026.10.4 frontend.
