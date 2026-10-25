@@ -2,7 +2,8 @@
 
 ## 0.10.0-beta.2
 
-- The guest page is built on the Home Assistant 2026.10.1 frontend.
+- The guest page is built on the Home Assistant 2026.10.4 frontend.
+- Login links now sign guests in on the guest page.
 
 ## 0.10.0-beta.1
 
