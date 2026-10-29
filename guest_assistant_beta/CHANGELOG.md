@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.0-beta.5
+
+- The guest page is built on the Home Assistant 2026.11.0b0 frontend, meant for that Home Assistant beta; on an older Home Assistant some cards may not work.
+
 ## 0.10.0-beta.4
 
 - A guest's companion app logins have their own view on the Guests tab
