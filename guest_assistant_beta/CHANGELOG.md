@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.0-beta.7
+
+- The guest page is built on the Home Assistant 2026.12.0b2 frontend, meant for that Home Assistant beta; on an older Home Assistant some cards may not work.
+
 ## 0.10.0-beta.6
 
 - The guest page is built on the Home Assistant 2026.11.0 frontend.
